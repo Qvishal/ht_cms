@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ht_cms_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ht_cms
+      POSTGRES_USER: ht_cms
+      POSTGRES_PASSWORD: ht_cms
+    ports:
+      - "5432:5432"
+    volumes:
+      - ht_cms_pgdata:/var/lib/postgresql/data
+
+volumes:
+  ht_cms_pgdata:
+
