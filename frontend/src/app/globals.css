@@ -79,8 +79,8 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    /* System dark fallback when no explicit theme is set */
+  /* Only apply system dark variables when no explicit data-theme attribute is present */
+  :root:not([data-theme]) {
     --background: 0 0% 7%; /* #121212 */
     --foreground: 0 0% 92%;
 
