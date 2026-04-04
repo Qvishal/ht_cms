@@ -1,4 +1,11 @@
-export type ColumnType = "string" | "number" | "boolean" | "date" | "json";
+// `json` is kept for backward compatibility (older schemas) but is treated as `text`.
+export type ColumnType =
+  | "string"
+  | "text"
+  | "number"
+  | "boolean"
+  | "date"
+  | "json";
 
 export type ColumnDef = {
   name: string;
@@ -15,4 +22,3 @@ export type CmsSchema = {
   version: 1;
   tables: TableDef[];
 };
-

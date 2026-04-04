@@ -16,6 +16,7 @@ import { toast } from "sonner";
 
 import { apiGet, apiPost } from "@/lib/api";
 import { getToken } from "@/lib/auth";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,7 +27,7 @@ const Ident = z.string().regex(/^[a-z][a-z0-9_]*$/, "Use lowercase snake_case (e
 
 const ColumnSchema = z.object({
   name: Ident,
-  type: z.enum(["string", "number", "boolean", "date", "json"]),
+  type: z.enum(["string", "text", "number", "boolean", "date"]),
   required: z.boolean().default(false)
 });
 
@@ -64,6 +65,11 @@ export default function SetupPage() {
       router.replace("/login");
       return;
     }
+    apiGet("/me")
+      .then((m) => {
+        if (m?.user?.role !== "admin") router.replace("/dashboard");
+      })
+      .catch(() => {});
     apiGet("/setup/status")
       .then((s) => {
         if (s.schemaInitialized) router.replace("/dashboard");
@@ -89,6 +95,9 @@ export default function SetupPage() {
 
   return (
     <div className="min-h-screen p-6">
+      <div className="fixed right-4 top-4">
+        <ThemeToggle />
+      </div>
       <div className="mx-auto max-w-5xl space-y-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">First-time Setup</h1>
@@ -240,10 +249,10 @@ function ColumnsEditor({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="string">string</SelectItem>
+                    <SelectItem value="text">text</SelectItem>
                     <SelectItem value="number">number</SelectItem>
                     <SelectItem value="boolean">boolean</SelectItem>
                     <SelectItem value="date">date</SelectItem>
-                    <SelectItem value="json">json</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

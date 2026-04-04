@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -9,6 +10,7 @@ import { toast } from "sonner";
 
 import { apiPost, apiPublicGet } from "@/lib/api";
 import { setToken } from "@/lib/auth";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -62,6 +64,9 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
+      <div className="fixed right-4 top-4">
+        <ThemeToggle />
+      </div>
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>HT CMS Admin</CardTitle>
@@ -95,6 +100,15 @@ export default function LoginPage() {
               <Button className="w-full" type="submit" disabled={loading}>
                 {loading ? "Please wait…" : mode === "bootstrap" ? "Create admin" : "Sign in"}
               </Button>
+
+              {mode === "login" ? (
+                <p className="text-center text-sm text-muted-foreground">
+                  Need an account?{" "}
+                  <Link className="text-foreground underline underline-offset-4" href="/register">
+                    Register
+                  </Link>
+                </p>
+              ) : null}
             </form>
           )}
         </CardContent>

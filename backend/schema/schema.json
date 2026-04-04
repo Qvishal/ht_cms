@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "tables": [
+    {
+      "name": "posts",
+      "columns": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "required": true
+        }
+      ]
+    }
+  ]
+}

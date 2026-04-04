@@ -2,54 +2,117 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: 0 0% 100%;
-  --foreground: 222.2 47.4% 11.2%;
+:root,
+[data-theme="light"] {
+  /* Light theme (guidelines) */
+  --background: 216 29% 97%; /* #f4f6f9 */
+  --foreground: 222 25% 12%;
+
+  --card: 0 0% 100%; /* #ffffff */
+  --card-foreground: 222 25% 12%;
 
   --muted: 210 40% 96.1%;
   --muted-foreground: 215.4 16.3% 46.9%;
 
-  --popover: 0 0% 100%;
-  --popover-foreground: 222.2 47.4% 11.2%;
+  --popover: var(--card);
+  --popover-foreground: var(--card-foreground);
 
-  --border: 214.3 31.8% 91.4%;
-  --input: 214.3 31.8% 91.4%;
-  --ring: 222.2 84% 4.9%;
+  --border: 220 18% 88%;
+  --input: 220 18% 88%;
+  --ring: 221 83% 53%;
 
-  --primary: 222.2 47.4% 11.2%;
-  --primary-foreground: 210 40% 98%;
+  --primary: 221 83% 53%;
+  --primary-foreground: 0 0% 98%;
 
-  --secondary: 210 40% 96.1%;
+  --secondary: 220 18% 92%;
   --secondary-foreground: 222.2 47.4% 11.2%;
 
-  --accent: 210 40% 96.1%;
+  --accent: 220 18% 92%;
   --accent-foreground: 222.2 47.4% 11.2%;
 
   --destructive: 0 84.2% 60.2%;
   --destructive-foreground: 210 40% 98%;
 
+  /* App shell tokens */
+  --sidebar: 222 24% 14%;
+  --sidebar-foreground: 0 0% 98%;
+  --sidebar-muted: 222 20% 20%;
+  --sidebar-border: 222 20% 22%;
+
   --radius: 10px;
+}
+
+[data-theme="dark"] {
+  /* Dark theme (guidelines) */
+  --background: 0 0% 7%; /* #121212 */
+  --foreground: 0 0% 92%;
+
+  --card: 0 0% 12%; /* #1E1E1E */
+  --card-foreground: 0 0% 92%;
+
+  --muted: 0 0% 16%;
+  --muted-foreground: 0 0% 70%;
+
+  --popover: var(--card);
+  --popover-foreground: var(--card-foreground);
+
+  --border: 0 0% 22%;
+  --input: 0 0% 22%;
+  --ring: 221 83% 53%;
+
+  --primary: 221 83% 62%;
+  --primary-foreground: 0 0% 8%;
+
+  --secondary: 0 0% 16%;
+  --secondary-foreground: 0 0% 92%;
+
+  --accent: 0 0% 16%;
+  --accent-foreground: 0 0% 92%;
+
+  --destructive: 0 70% 42%;
+  --destructive-foreground: 0 0% 98%;
+
+  --sidebar: 0 0% 10%;
+  --sidebar-foreground: 0 0% 92%;
+  --sidebar-muted: 0 0% 14%;
+  --sidebar-border: 0 0% 18%;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
+    /* System dark fallback when no explicit theme is set */
+    --background: 0 0% 7%; /* #121212 */
+    --foreground: 0 0% 92%;
+
+    --card: 0 0% 12%; /* #1E1E1E */
+    --card-foreground: 0 0% 92%;
+
+    --muted: 0 0% 16%;
+    --muted-foreground: 0 0% 70%;
+
+    --popover: var(--card);
+    --popover-foreground: var(--card-foreground);
+
+    --border: 0 0% 22%;
+    --input: 0 0% 22%;
+    --ring: 221 83% 53%;
+
+    --primary: 221 83% 62%;
+    --primary-foreground: 0 0% 8%;
+
+    --secondary: 0 0% 16%;
+    --secondary-foreground: 0 0% 92%;
+
+    --accent: 0 0% 16%;
+    --accent-foreground: 0 0% 92%;
+
+    --destructive: 0 70% 42%;
+    --destructive-foreground: 0 0% 98%;
+
+    --sidebar: 0 0% 10%;
+    --sidebar-foreground: 0 0% 92%;
+    --sidebar-muted: 0 0% 14%;
+    --sidebar-border: 0 0% 18%;
   }
 }
 
@@ -61,3 +124,37 @@ body {
   @apply bg-background text-foreground;
 }
 
+/* Subtle motion without heavy animations */
+* {
+  @apply transition-colors duration-200;
+}
+
+/* Minimal modal animations (no transform to avoid interfering with translated centering) */
+.animate-in {
+  animation: ht-fade-in 160ms ease-out both;
+}
+.animate-out {
+  animation: ht-fade-out 120ms ease-in both;
+}
+@keyframes ht-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes ht-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Contenteditable placeholder */
+[contenteditable][data-placeholder]:empty:before {
+  content: attr(data-placeholder);
+  color: hsl(var(--muted-foreground));
+}

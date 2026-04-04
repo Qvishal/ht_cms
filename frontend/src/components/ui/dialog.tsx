@@ -13,10 +13,10 @@ export function DialogContent({
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 bg-black/40" />
+      <DialogPrimitive.Overlay className="fixed inset-0 bg-black/50 backdrop-blur-[2px] data-[state=open]:animate-in data-[state=closed]:animate-out" />
       <DialogPrimitive.Content
         className={cn(
-          "fixed left-1/2 top-1/2 w-full -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-background p-4 shadow-lg",
+          "fixed left-1/2 top-1/2 w-full -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-card p-5 shadow-xl outline-none data-[state=open]:animate-in data-[state=closed]:animate-out",
           className
         )}
         {...props}
@@ -34,4 +34,3 @@ export function DialogFooter({ className, ...props }: React.HTMLAttributes<HTMLD
 }
 
 export const DialogTitle = DialogPrimitive.Title;
-

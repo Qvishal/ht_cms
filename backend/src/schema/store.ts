@@ -13,13 +13,21 @@ const SchemaFile = z.object({
         columns: z.array(
           z.object({
             name: z.string(),
-            type: z.enum(["string", "number", "boolean", "date", "json"]),
-            required: z.boolean().optional()
-          })
-        )
-      })
+            // `json` is legacy and will be normalized to `text` on read.
+            type: z.enum([
+              "string",
+              "text",
+              "number",
+              "boolean",
+              "date",
+              "json",
+            ]),
+            required: z.boolean().optional(),
+          }),
+        ),
+      }),
     )
-    .default([])
+    .default([]),
 });
 
 export function schemaPath(): string {
@@ -33,7 +41,18 @@ export async function readSchema(): Promise<CmsSchema> {
     const raw = await readFile(filePath, "utf8");
     const parsed = SchemaFile.safeParse(JSON.parse(raw));
     if (!parsed.success) throw parsed.error;
-    return parsed.data as CmsSchema;
+    // Normalize legacy `json` → `text` so newer UI/validators stay consistent.
+    const normalized = {
+      ...parsed.data,
+      tables: parsed.data.tables.map((t) => ({
+        ...t,
+        columns: t.columns.map((c) => ({
+          ...c,
+          type: c.type === "json" ? "text" : c.type,
+        })),
+      })),
+    };
+    return normalized as CmsSchema;
   } catch (err) {
     // If missing or invalid, start empty.
     return { version: 1, tables: [] };
@@ -43,6 +62,5 @@ export async function readSchema(): Promise<CmsSchema> {
 export async function writeSchema(schema: CmsSchema): Promise<void> {
   const filePath = schemaPath();
   await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, JSON.stringify(schema, null, 2) + "\n", "utf8");
+  await writeFile(filePath, `${JSON.stringify(schema, null, 2)}\n`, "utf8");
 }
-
