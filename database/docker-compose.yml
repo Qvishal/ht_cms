@@ -12,6 +12,33 @@ services:
     volumes:
       - ht_cms_pgdata:/var/lib/postgresql/data
 
+  redis:
+    image: redis:7-alpine
+    container_name: ht_cms_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - ht_cms_redisdata:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+  varnish:
+    image: varnish:7-alpine
+    container_name: ht_cms_varnish
+    restart: "no"
+    ports:
+      - "6081:80"
+    volumes:
+      - ../backend/config/varnish.vcl:/etc/varnish/default.vcl:ro
+    environment:
+      VARNISH_CONFIG: /etc/varnish/default.vcl
+      VARNISH_MEMORY: 256m
+    command: varnishd -f /etc/varnish/default.vcl -s malloc,256m -a 0.0.0.0:80 -T 0.0.0.0:6082 -F
+    depends_on:
+      - postgres
+      - redis
+
 volumes:
   ht_cms_pgdata:
+  ht_cms_redisdata:
 

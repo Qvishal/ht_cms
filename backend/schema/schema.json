@@ -5,13 +5,28 @@
       "name": "posts",
       "columns": [
         {
+          "name": "description",
+          "type": "text",
+          "required": true
+        },
+        {
           "name": "title",
+          "type": "string",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "product",
+      "columns": [
+        {
+          "name": "product_name",
           "type": "string",
           "required": true
         },
         {
-          "name": "description",
-          "type": "text",
+          "name": "price",
+          "type": "number",
           "required": true
         }
       ]

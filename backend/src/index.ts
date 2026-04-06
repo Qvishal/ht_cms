@@ -73,6 +73,15 @@ import {
 } from "./services/users";
 import { getRowVersionById, listRowVersions } from "./services/versions";
 
+// Caching imports
+import caching from "./services/caching";
+import cacheInvalidation from "./middleware/cacheInvalidation";
+import {
+  buildCacheKey,
+  shouldCacheInVarnish,
+  getVarnishCacheControl,
+} from "./lib/cacheKeys";
+
 const env = loadEnv();
 
 await migrate();
@@ -127,7 +136,33 @@ const app = new Elysia()
       error: error.message,
       code,
     };
-  })
+  });
+
+// Initialize caching system
+try {
+  await caching.initializeRedis(env.REDIS_URL);
+  console.log("✓ Cache system initialized");
+} catch (error) {
+  console.warn("⚠ Cache initialization failed:", error);
+}
+
+// Configure caching
+caching.setCacheConfig({
+  strategy: (process.env.CACHE_STRATEGY as
+    | "HYBRID"
+    | "REDIS_ONLY"
+    | "DISABLED") || "HYBRID",
+  publicOnly: process.env.CACHE_PUBLIC_ONLY !== "false",
+  ttl: {
+    query: 300, // 5 minutes
+    row: 900, // 15 minutes
+    session: 86400, // 24 hours
+    rbac: 3600, // 1 hour
+    stats: 300, // 5 minutes
+  },
+});
+
+app
   .get("/health", async () => {
     await db`select 1`;
     return { ok: true };
@@ -202,6 +237,16 @@ const app = new Elysia()
       email: user.email,
       role: user.role,
     });
+
+    // ✅ CACHE SESSION DATA
+    await caching.cacheSession(`session:${user.id}:${token}`, {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      name: user.name,
+      loginTime: Date.now(),
+    });
+
     // Backward compatible: keep `admin` field when the user is an admin.
     return {
       token,
@@ -548,8 +593,92 @@ const app = new Elysia()
     });
     return applied;
   })
-  .get("/data/:table", async ({ params, query, authUser }) => {
-    requireAuth(authUser);
+  // Public API endpoints with caching
+  .get("/api/public/:table", async ({ params, query, set }) => {
+    // Parse pagination
+    const limit = z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .catch(50)
+      .parse(query.limit);
+    const offset = z.coerce.number().int().min(0).catch(0).parse(query.offset);
+
+    // Try Redis cache first
+    const cachedRows = await caching.getCachedQueryResult(params.table, {}, limit, offset);
+    if (cachedRows) {
+      set.header("Cache-Control", "public, max-age=120");
+      set.header("X-Cache", "HIT");
+      return cachedRows;
+    }
+
+    // Cache miss - fetch from database
+    const visibilityMode = await getVisibilityMode(params.table);
+
+    // Only serve public tables
+    if (visibilityMode !== "GLOBAL_ACCESS") {
+      set.status = 403;
+      return { error: "Table not publicly accessible" };
+    }
+
+    const rows = await listRows(params.table, limit, offset, {
+      userId: "public",
+      isAdmin: false,
+      visibilityMode: "GLOBAL_ACCESS",
+      includeDeleted: false,
+    });
+
+    // Cache the result
+    await caching.cacheQueryResult(params.table, {}, limit, offset, { rows });
+
+    // Set Varnish cache header
+    set.header("Cache-Control", "public, max-age=120");
+    set.header("X-Cache", "MISS");
+    return { rows };
+  })
+  .get("/api/public/:table/:id", async ({ params, set }) => {
+    // Try Redis cache for individual row
+    const cachedRow = await caching.getCachedRow(params.table, params.id);
+    if (cachedRow) {
+      set.header("Cache-Control", "public, max-age=300");
+      set.header("X-Cache", "HIT");
+      return { row: cachedRow };
+    }
+
+    // Cache miss - fetch from database
+    const visibilityMode = await getVisibilityMode(params.table);
+
+    if (visibilityMode !== "GLOBAL_ACCESS") {
+      set.status = 403;
+      return { error: "Table not publicly accessible" };
+    }
+
+    const row = await getRow(params.table, params.id, {
+      userId: "public",
+      isAdmin: false,
+      visibilityMode: "GLOBAL_ACCESS",
+      includeDeleted: false,
+    });
+
+    if (!row) {
+      set.status = 404;
+      return { error: "Not found" };
+    }
+
+    // Cache individual row
+    await caching.cacheRow(params.table, params.id, row);
+
+    set.header("Cache-Control", "public, max-age=300");
+    set.header("X-Cache", "MISS");
+    return { row };
+  })
+  // Private data endpoints (authenticated users)
+  .get("/data/:table", async ({ params, query, authUser, set }) => {
+    if (!authUser) {
+      set.status = 401;
+      return { error: "Unauthorized - Token required" };
+    }
     await requireTableRead(authUser, params.table);
     const limit = z.coerce
       .number()
@@ -559,8 +688,7 @@ const app = new Elysia()
       .catch(50)
       .parse(query.limit);
     const offset = z.coerce.number().int().min(0).catch(0).parse(query.offset);
-    const includeDeleted =
-      authUser.role === "admin" && String(query.includeDeleted ?? "") === "1";
+    const includeDeleted = authUser.role === "admin" && String(query.includeDeleted ?? "") === "1";
     const visibilityMode = await getVisibilityMode(params.table);
     const rows = await listRows(params.table, limit, offset, {
       userId: authUser.id,
@@ -571,11 +699,13 @@ const app = new Elysia()
     return { rows };
   })
   .get("/data/:table/:id", async ({ params, query, authUser, set }) => {
-    requireAuth(authUser);
+    if (!authUser) {
+      set.status = 401;
+      return { error: "Unauthorized - Token required" };
+    }
     await requireTableRead(authUser, params.table);
     const visibilityMode = await getVisibilityMode(params.table);
-    const includeDeleted =
-      authUser.role === "admin" && String(query.includeDeleted ?? "") === "1";
+    const includeDeleted = authUser.role === "admin" && String(query.includeDeleted ?? "") === "1";
     const row = await getRow(params.table, params.id, {
       userId: authUser.id,
       isAdmin: authUser.role === "admin",
@@ -588,8 +718,12 @@ const app = new Elysia()
     }
     return { row };
   })
-  .post("/data/:table", async ({ params, body, authUser }) => {
-    requireAuth(authUser);
+  .post("/data/:table", async ({ params, body, authUser, set }) => {
+    // Authentication required for create
+    if (!authUser) {
+      set.status = 401;
+      return { error: "Unauthorized - Token required to create data" };
+    }
     await requireTableWrite(authUser, params.table);
     const visibilityMode = await getVisibilityMode(params.table);
     const row = await createRow(
@@ -601,10 +735,22 @@ const app = new Elysia()
         visibilityMode,
       },
     );
+
+    // ✅ INVALIDATE CACHE AFTER CREATE
+    await cacheInvalidation.smartInvalidate({
+      operation: "CREATE",
+      tableName: params.table,
+      newData: row,
+    });
+
     return { row };
   })
   .put("/data/:table/:id", async ({ params, body, authUser, set }) => {
-    requireAuth(authUser);
+    // Authentication required for update
+    if (!authUser) {
+      set.status = 401;
+      return { error: "Unauthorized - Token required to update data" };
+    }
     await requireTableWrite(authUser, params.table);
     const visibilityMode = await getVisibilityMode(params.table);
     const row = await updateRow(
@@ -621,10 +767,23 @@ const app = new Elysia()
       set.status = 404;
       return { error: "Not found" };
     }
+
+    // ✅ INVALIDATE CACHE AFTER UPDATE
+    await cacheInvalidation.smartInvalidate({
+      operation: "UPDATE",
+      tableName: params.table,
+      rowId: params.id,
+      newData: row,
+    });
+
     return { row };
   })
   .delete("/data/:table/:id", async ({ params, authUser, set }) => {
-    requireAuth(authUser);
+    // Authentication required for delete
+    if (!authUser) {
+      set.status = 401;
+      return { error: "Unauthorized - Token required to delete data" };
+    }
     await requireTableWrite(authUser, params.table);
     const visibilityMode = await getVisibilityMode(params.table);
     const row = await softDeleteRow(params.table, params.id, {
@@ -636,11 +795,22 @@ const app = new Elysia()
       set.status = 404;
       return { error: "Not found" };
     }
+
+    // ✅ INVALIDATE CACHE AFTER DELETE
+    await cacheInvalidation.smartInvalidate({
+      operation: "DELETE",
+      tableName: params.table,
+      rowId: params.id,
+    });
+
     return { ok: true };
   })
   .post("/data/:table/:id/restore", async ({ params, authUser, set }) => {
-    requireAuth(authUser);
-    requireAdmin(authUser);
+    // Admin only
+    if (!authUser || authUser.role !== "admin") {
+      set.status = 401;
+      return { error: "Unauthorized - Admin access required" };
+    }
     const row = await restoreRow(params.table, params.id, {
       userId: authUser.id,
       isAdmin: true,
@@ -941,7 +1111,42 @@ app
       }
       return { row: next };
     },
-  );
+  )
+  // ✅ ADMIN CACHE MANAGEMENT ENDPOINTS
+  .get("/admin/cache/stats", async ({ authUser, set }) => {
+    // Admin-only endpoint
+    if (!authUser || authUser.role !== "admin") {
+      set.status = 403;
+      return { error: "Forbidden - Admin only" };
+    }
+
+    const stats = await caching.getCacheStats();
+    return stats;
+  })
+  .post("/admin/cache/clear", async ({ authUser, set }) => {
+    // Admin-only endpoint
+    if (!authUser || authUser.role !== "admin") {
+      set.status = 403;
+      return { error: "Forbidden - Admin only" };
+    }
+
+    await caching.clearAllCaches();
+    return { ok: true, message: "All caches cleared" };
+  })
+  .post("/admin/cache/invalidate/:table", async ({
+    params,
+    authUser,
+    set,
+  }) => {
+    // Admin-only endpoint
+    if (!authUser || authUser.role !== "admin") {
+      set.status = 403;
+      return { error: "Forbidden - Admin only" };
+    }
+
+    await caching.invalidateTable(params.table);
+    return { ok: true, message: `Cache invalidated for table: ${params.table}` };
+  });
 
 app.listen(env.PORT);
 

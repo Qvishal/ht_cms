@@ -6,8 +6,9 @@ const EnvSchema = z.object({
     .enum(["development", "test", "production"])
     .default("development"),
   DATABASE_URL: z.string().min(1),
+  REDIS_URL: z.string().url().default("redis://127.0.0.1:6379"),
   JWT_SECRET: z.string().min(16).or(z.string().min(1)),
-  FRONTEND_ORIGIN: z.string().url().default("http://localhost:3000"),
+  FRONTEND_ORIGIN: z.string().url().default("http://localhost:3001"),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
