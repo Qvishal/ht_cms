@@ -560,6 +560,41 @@ async function logCacheOperation(operation: any): Promise<void> {
   }
 }
 
+/**
+ * Rate limiting helpers (used for brute-force protection on auth routes)
+ */
+export async function getRateLimitAttempts(key: string): Promise<number | null> {
+  if (!redisInstance) return null;
+  try {
+    const val = await redisInstance.get(key);
+    return val === null ? null : Number(val);
+  } catch {
+    return null;
+  }
+}
+
+export async function incrementRateLimit(key: string, ttlSeconds: number): Promise<void> {
+  if (!redisInstance) return;
+  try {
+    const current = await redisInstance.incr(key);
+    if (current === 1) {
+      // First attempt — set the TTL window
+      await redisInstance.expire(key, ttlSeconds);
+    }
+  } catch {
+    // Silent fail — don't block auth on Redis unavailability
+  }
+}
+
+export async function clearRateLimit(key: string): Promise<void> {
+  if (!redisInstance) return;
+  try {
+    await redisInstance.del(key);
+  } catch {
+    // Silent fail
+  }
+}
+
 export default {
   initializeRedis,
   getCache,
@@ -587,4 +622,7 @@ export default {
   clearAllCaches,
   setCacheConfig,
   getCacheConfig,
+  getRateLimitAttempts,
+  incrementRateLimit,
+  clearRateLimit,
 };

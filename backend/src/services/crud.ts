@@ -22,6 +22,7 @@ function validateValue(type: ColumnDef["type"], value: unknown): boolean {
   switch (type) {
     case "string":
     case "text":
+    case "image": // stored as text (URL or upload path)
       return typeof value === "string";
     case "number":
       return typeof value === "number" && Number.isFinite(value);
@@ -32,6 +33,8 @@ function validateValue(type: ColumnDef["type"], value: unknown): boolean {
     case "json":
       // Legacy: callers should send a string; DB stores text.
       return typeof value === "string";
+    default:
+      return false;
   }
 }
 

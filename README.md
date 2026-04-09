@@ -6,17 +6,19 @@ Production-ready starter for a Headless CMS with:
 - **Backend** REST API (Bun + Elysia)
 - **PostgreSQL** (Docker Compose)
 - **Dynamic schema system** (setup wizard → generates tables + persists `schema/schema.json`)
+- **Advanced Security (VAPT Hardened)**: Transport encryption, payload encryption, rate limiting, and more.
 
 ## Tech stack
 
-- Frontend: Next.js, React, TypeScript, Tailwind CSS, shadcn/ui, React Hook Form, Zod, TanStack Table, Sonner
-- Backend: Bun, Elysia, Zod, PostgreSQL (postgres.js), JWT auth
-- Database: PostgreSQL 16 (docker-compose)
+- Frontend: Next.js, React, TypeScript, Tailwind CSS, shadcn/ui, React Hook Form, Zod, TanStack Table, Web Crypto API
+- Backend: Bun, Elysia, Zod, PostgreSQL (postgres.js), JWT auth, Redis (Rate limiting)
+- Database: PostgreSQL 16 (docker-compose), Redis
 
 ## Folder structure
 
 - `frontend/` — Admin panel UI
 - `backend/` — Bun API server
+- `backend/uploads/` — Secure native image storage
 - `database/` — Postgres docker-compose
 - `schema/` — Generated schema file (source of truth for UI + validation)
 
@@ -24,60 +26,77 @@ Production-ready starter for a Headless CMS with:
 
 - Node.js 20+
 - Bun 1.1+
-- Docker (for PostgreSQL)
+- Docker (for PostgreSQL + Redis)
+- [mkcert](https://github.com/FiloSottile/mkcert) (for local HTTPS development)
 
 ## Quickstart (local)
 
-1) Start Postgres:
+1) Start Services:
 
 ```bash
 cd database
 docker compose up -d
 ```
 
-2) Configure env:
-
-- Copy `backend/.env.example` → `backend/.env`
-- Copy `frontend/.env.example` → `frontend/.env.local`
-
-Key env vars:
-
-- Backend: `DATABASE_URL`, `JWT_SECRET`, `FRONTEND_ORIGIN`
-- Frontend: `NEXT_PUBLIC_API_URL`
-
-3) Install + run backend:
+2) Generate local SSL certificates:
 
 ```bash
 cd backend
-bun install
-bun run dev
+mkcert localhost 127.0.0.1 ::1
 ```
 
-4) Install + run frontend:
+3) Configure env:
+
+- Copy `backend/.env.example` → `backend/.env`
+- Copy `frontend/.env.example` → `frontend/.env.local`
+- Update `SSL_CERT_PATH` and `SSL_KEY_PATH` in `backend/.env` to point to the generated `.pem` files.
+
+4) Install + run:
 
 ```bash
-cd frontend
-npm install
-npm run dev
+# Backend
+cd backend && bun install && bun run dev
+
+# Frontend
+cd frontend && npm install && npm run dev
 ```
 
 Open:
+- Admin UI: http://localhost:3001
+- Secure API: https://localhost:4433 (Redirects from http://localhost:4000)
 
-- Admin UI: http://localhost:3000
-- API: http://localhost:4000
+## Security & VAPT Hardening
 
-## First-time setup flow
+This CMS is built with a security-first approach:
 
-1) Go to the admin UI and create the **first admin user**.
-2) Log in.
-3) If no schema exists yet, you are redirected to the **Setup Wizard**:
-   - Create one or more tables
-   - Add columns and types
-   - Apply schema
-4) The backend:
-   - Creates physical Postgres tables
-   - Writes/updates `schema/schema.json`
-   - Inserts a registry record into `cms_tables` / `cms_columns`
+### 🛡️ Transport Security (HTTPS)
+- **FORCE_HTTPS**: Enforces SSL/TLS for all API traffic.
+- **HSTS**: `Strict-Transport-Security` headers tell browsers to only use HTTPS for 1 year.
+- **Native TLS**: Support for Bun native TLS server using `SSL_CERT_PATH`.
+
+### 🛡️ Application-Level Encryption (ALE)
+- **Payload Encryption**: All JSON bodies (Request & Response) are encrypted using **AES-256-GCM** before being sent over the wire.
+- **Probabilistic**: Uses unique Initialization Vectors (IV) for every message.
+- **CORS Support**: Custom `x-payload-encrypted` header is allowed and exposed.
+- Toggle via `ENCRYPT_PAYLOADS` and `PAYLOAD_ENCRYPTION_KEY`.
+
+### 🛡️ Brute-Force Protection
+- **Rate Limiting**: Redis-backed brute-force protection on `/auth/login` (5 attempts / 15 mins per IP).
+
+### 🛡️ Image Security
+- **Auth Guarded**: Images in `backend/uploads/` are NOT accessible publicly.
+- **Token Access**: Direct browser viewing requires a `?token=...` query parameter.
+- **Native Multipart**: `/upload` uses native Elysia `t.File()` parsing for extreme stability and isolation from global hooks.
+
+## Features
+
+### 🖼️ Image Column Support
+- Add a column with type `image`.
+- Supports direct URL entry or **Native File Upload**.
+- Thumbnails and previews integrated into the dashboard.
+
+### 💨 Performance
+- **Native Gzip**: All API JSON responses are compressed via `Bun.gzipSync` (~50% size reduction).
 
 ## Schema system (how it works)
 
@@ -91,17 +110,11 @@ Open:
   - Update registry
   - Persist updated schema to disk
 
-Notes:
-
-- Each generated table always includes: `id` (uuid), `created_at`, `updated_at`
-- `id`, `created_at`, `updated_at` are reserved names and cannot be added as custom columns
-- Schema changes are **additive** (no automatic drop/rename) to keep production safe
-
 ## API overview (selected)
 
 - Auth
   - `POST /auth/bootstrap` (only if no admin exists)
-  - `POST /auth/login`
+  - `POST /auth/login` (Rate limited)
 - Setup/schema
   - `GET /setup/status`
   - `GET /schema`
@@ -111,25 +124,23 @@ Notes:
   - `GET /tables/:table/columns`
 - Dynamic CRUD
   - `GET /data/:table`
-  - `GET /data/:table/:id`
-  - `POST /data/:table`
-  - `PUT /data/:table/:id`
+  - `POST /data/:table` (Encrypted)
+  - `PUT /data/:table/:id` (Encrypted)
   - `DELETE /data/:table/:id`
+- Uploads
+  - `POST /upload` (Multipart, isolated from encryption hooks)
+  - `GET /uploads/:filename` (Auth required, supports token param)
 
-## Example usage
+## Example usage (ALE Encrypted)
 
-Create a row:
+When encryption is on, payloads must wrap the cipher in `{"encrypted": "..."}`.
 
 ```bash
-curl -H "Authorization: Bearer <token>" \
+# Encrypted creation
+curl -k -X POST https://localhost:4433/data/posts \
+  -H "Authorization: Bearer <token>" \
+  -H "X-Payload-Encrypted: true" \
   -H "Content-Type: application/json" \
-  -d '{"title":"Hello","published":true}' \
-  http://localhost:4000/data/posts
+  -d '{"encrypted":"<base64_aes_gcm_payload>"}'
 ```
 
-List rows:
-
-```bash
-curl -H "Authorization: Bearer <token>" \
-  "http://localhost:4000/data/posts?limit=20&offset=0"
-```

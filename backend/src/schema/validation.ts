@@ -9,6 +9,7 @@ export const ColumnTypeEnum = z.enum([
   "boolean",
   "date",
   "json",
+  "image",
 ]);
 
 export const ColumnDefSchema = z

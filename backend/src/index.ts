@@ -1,7 +1,7 @@
 import { cors } from "@elysiajs/cors";
 import { jwt } from "@elysiajs/jwt";
 import { swagger } from "@elysiajs/swagger";
-import { Elysia } from "elysia";
+import { Elysia, t } from "elysia";
 import { z } from "zod";
 
 import { hashPassword, verifyPassword } from "./auth/password";
@@ -15,6 +15,7 @@ import {
 import { db } from "./db";
 import { loadEnv } from "./env";
 import { assertIdent, quoteIdent } from "./lib/ids";
+import { encryptPayload, decryptPayload } from "./lib/encryption";
 import { migrate } from "./migrations";
 import { sqlTypeFor } from "./schema/sql";
 import type { ColumnDef } from "./schema/types";
@@ -87,6 +88,28 @@ import {
 
 const env = loadEnv();
 
+// ⚠️  Security: Warn about weak JWT secret
+if (env.JWT_SECRET.length < 32 || env.JWT_SECRET.includes("change-me")) {
+  if (env.NODE_ENV === "production") {
+    throw new Error(
+      "FATAL: JWT_SECRET is too weak or is the default value. Set a strong secret (32+ chars) before running in production."
+    );
+  } else {
+    console.warn(
+      "⚠️  SECURITY WARNING: JWT_SECRET is weak or still set to the default. Change this before deploying to production!"
+    );
+  }
+}
+
+// ⚠️  Security: Validate HTTPS config
+if (env.FORCE_HTTPS && (!env.SSL_CERT_PATH || !env.SSL_KEY_PATH)) {
+  console.warn(
+    "⚠️  FORCE_HTTPS=true but SSL_CERT_PATH / SSL_KEY_PATH are not set. " +
+    "HTTP→HTTPS redirect enforcement is active (proxy mode). " +
+    "Set SSL_CERT_PATH and SSL_KEY_PATH for native Bun TLS."
+  );
+}
+
 await migrate();
 
 const app = new Elysia()
@@ -106,7 +129,8 @@ const app = new Elysia()
     cors({
       origin: env.FRONTEND_ORIGIN,
       credentials: true,
-      allowedHeaders: ["Content-Type", "Authorization"],
+      allowedHeaders: ["Content-Type", "Authorization", "x-payload-encrypted"],
+      exposeHeaders: ["x-payload-encrypted"],
     }),
   )
   .use(jwt({ name: "jwt", secret: env.JWT_SECRET, exp: "1d" }))
@@ -131,10 +155,110 @@ const app = new Elysia()
     }
     return { authUser: user };
   })
-  .onRequest(({ request }) => {
+  .onRequest(async ({ request }) => {
     console.info(
       `${new Date().toISOString()} ${request.method} ${new URL(request.url).pathname}`,
     );
+  })
+  .onBeforeHandle((ctx) => {
+    const { request, set } = ctx;
+
+    // ── HTTPS enforcement ──
+    if (env.FORCE_HTTPS) {
+      const proto =
+        request.headers.get("x-forwarded-proto") ??
+        (new URL(request.url).protocol === "https:" ? "https" : "http");
+
+      if (proto !== "https") {
+        const url = new URL(request.url);
+        url.protocol = "https:";
+        url.port = String(env.HTTPS_PORT);
+        set.status = 301;
+        set.headers["Location"] = url.toString();
+        set.headers["Content-Type"] = "text/plain";
+        return "Redirecting to HTTPS…";
+      }
+    }
+
+    // ── Payload Decryption (ALE) ──
+    const path = new URL(request.url).pathname;
+    const isEncrypted = request.headers.get("x-payload-encrypted") === "true";
+    const contentType = request.headers.get("content-type") || "";
+    const isMultipart = contentType.includes("multipart/form-data");
+
+    // Path isolation: ignore /upload entirely for decryption
+    if (path === "/upload") return;
+
+    // Only access ctx.body if NOT a multipart request.
+    if ((env.ENCRYPT_PAYLOADS || isEncrypted) && !isMultipart) {
+      const body = ctx.body as any;
+      if (body && typeof body === "object") {
+        const b = body as Record<string, any>;
+        if (b.encrypted && typeof b.encrypted === "string" && env.PAYLOAD_ENCRYPTION_KEY) {
+          try {
+            const decrypted = decryptPayload(b.encrypted, env.PAYLOAD_ENCRYPTION_KEY);
+            // Mutate the body object directly so subsequent handlers see the cleartext
+            Object.keys(b).forEach(k => delete b[k]);
+            Object.assign(b, decrypted);
+          } catch (e) {
+            console.error("Payload decryption failed:", e);
+            set.status = 400;
+            return { error: "Invalid encrypted payload", code: "BAD_REQUEST" };
+          }
+        }
+      }
+    }
+  })
+  .onAfterHandle(({ set, request, response }) => {
+    let finalResponse = response;
+
+    // ── Payload Encryption (ALE) ──
+    if (env.ENCRYPT_PAYLOADS && env.PAYLOAD_ENCRYPTION_KEY && response != null && !(response instanceof Blob) && typeof response !== "string") {
+      try {
+        const encrypted = encryptPayload(response, env.PAYLOAD_ENCRYPTION_KEY);
+        set.headers["X-Payload-Encrypted"] = "true";
+        finalResponse = { encrypted };
+      } catch (e) {
+        console.error("Payload encryption failed:", e);
+      }
+    }
+
+    // ── Gzip compression ──
+    const acceptEncoding = request.headers.get("accept-encoding") ?? "";
+    if (acceptEncoding.includes("gzip") && finalResponse != null) {
+      try {
+        let raw: string | null = null;
+        if (typeof finalResponse === "string") raw = finalResponse;
+        else if (typeof finalResponse === "object" && !(finalResponse instanceof Blob)) {
+          raw = JSON.stringify(finalResponse);
+        }
+        if (raw !== null) {
+          const compressed = Bun.gzipSync(Buffer.from(raw, "utf-8"));
+          set.headers["Content-Encoding"] = "gzip";
+          set.headers["Content-Type"] = "application/json;charset=utf-8";
+          set.headers["Vary"] = "Accept-Encoding";
+          return new Response(compressed, { headers: set.headers as Record<string, string> });
+        }
+      } catch {
+        // Fall through uncompressed on any error
+      }
+    }
+
+    // ── Security headers ──
+    set.headers["X-Content-Type-Options"] = "nosniff";
+    set.headers["X-Frame-Options"] = "DENY";
+    set.headers["X-XSS-Protection"] = "1; mode=block";
+    set.headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    set.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()";
+    set.headers["Content-Security-Policy"] =
+      "default-src 'none'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'";
+    // HSTS — only meaningful over HTTPS; tells browsers to always use HTTPS for 1 year
+    if (env.FORCE_HTTPS) {
+      set.headers["Strict-Transport-Security"] =
+        "max-age=31536000; includeSubDomains; preload";
+    }
+
+    return finalResponse;
   })
   .onError(({ code, error, set }) => {
     console.error(code, error);
@@ -201,6 +325,88 @@ app
     requireAuth(authUser);
     return { user: authUser };
   })
+  .get("/uploads/:filename", async ({ params: { filename }, query, authUser, jwt, set }) => {
+    // Auth: accept Bearer header OR ?token= query param (for direct browser navigation)
+    let resolvedUser = authUser;
+    if (!resolvedUser && query.token) {
+      try {
+        const payload = await jwt.verify(query.token as string);
+        if (payload) {
+          const sub = (payload as { sub?: unknown }).sub;
+          if (typeof sub === "string") {
+            resolvedUser = await getUserById(sub);
+          }
+        }
+      } catch {
+        // Invalid token — fall through to 401
+      }
+    }
+
+    if (!resolvedUser) {
+      set.status = 401;
+      return { error: "Unauthorized — login required to view this file" };
+    }
+
+    try {
+      // Sanitize filename — strip any path traversal attempts
+      const safe = filename.replace(/[^a-zA-Z0-9._-]/g, "");
+      if (safe !== filename || filename.includes("..")) {
+        set.status = 400;
+        return { error: "Invalid filename" };
+      }
+      const file = Bun.file(`./uploads/${safe}`);
+      if (await file.exists()) {
+        const ext = safe.split(".").pop()?.toLowerCase();
+        let mime = "application/octet-stream";
+        if (ext === "png") mime = "image/png";
+        else if (ext === "jpg" || ext === "jpeg") mime = "image/jpeg";
+        else if (ext === "gif") mime = "image/gif";
+        else if (ext === "svg") mime = "image/svg+xml";
+        else if (ext === "webp") mime = "image/webp";
+        set.headers["Content-Type"] = mime;
+        set.headers["Cache-Control"] = "private, max-age=3600";
+        return file;
+      }
+      set.status = 404;
+      return { error: "File not found" };
+    } catch {
+      set.status = 404;
+      return { error: "File not found" };
+    }
+  })
+  .post(
+    "/upload",
+    async ({ body, authUser, request }) => {
+      requireAuth(authUser);
+      
+      const { file } = body;
+      if (!file || file.size === 0) {
+        throw new Error("No file provided");
+      }
+
+      const originalName = (file as any).name || "upload_file";
+      const ext = (originalName.split(".").pop() || "bin").toLowerCase();
+
+      // Only allow safe image types
+      const allowed = ["jpg", "jpeg", "png", "gif", "webp", "svg"];
+      if (!allowed.includes(ext)) {
+        throw new Error(`File type ".${ext}" not allowed. Allowed: ${allowed.join(", ")}`);
+      }
+
+      const filename = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${ext}`;
+      const filePath = `./uploads/${filename}`;
+      await Bun.write(filePath, file);
+
+      const origin = new URL(request.url).origin;
+      const serverHost = process.env.API_URL || origin;
+      return { url: `${serverHost}/uploads/${filename}` };
+    },
+    {
+      body: t.Object({
+        file: t.File(),
+      }),
+    }
+  )
   .post("/auth/bootstrap", async ({ body, jwt, set }) => {
     const Body = z.object({
       email: z.string().email(),
@@ -233,24 +439,40 @@ app
     });
     return { token, admin: { id: admin.id, email: admin.email }, user: admin };
   })
-  .post("/auth/login", async ({ body, jwt, set }) => {
+  .post("/auth/login", async ({ body, jwt, set, request }) => {
     const Body = z.object({
       email: z.string().email(),
       password: z.string().min(1),
     });
     const parsed = Body.parse(body);
 
+    // ── Rate limiting: max 5 failed attempts per IP per 15 min ──
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0].trim() ??
+      request.headers.get("x-real-ip") ??
+      "unknown";
+    const rateLimitKey = `rl:login:${ip}`;
+    const attempts = await caching.getRateLimitAttempts(rateLimitKey);
+    if (attempts !== null && attempts >= 5) {
+      set.status = 429;
+      return { error: "Too many login attempts. Please wait 15 minutes before trying again." };
+    }
+
     const user = await getUserByEmailForLogin(parsed.email);
     if (!user) {
+      await caching.incrementRateLimit(rateLimitKey, 15 * 60);
       set.status = 401;
       return { error: "Invalid credentials" };
     }
 
     const ok = await verifyPassword(parsed.password, user.password_hash);
     if (!ok) {
+      await caching.incrementRateLimit(rateLimitKey, 15 * 60);
       set.status = 401;
       return { error: "Invalid credentials" };
     }
+    // Clear rate limit on successful login
+    await caching.clearRateLimit(rateLimitKey);
 
     // Look for existing active token
     const existingToken = await caching.getActiveUserToken(user.id);
@@ -833,6 +1055,7 @@ app
         switch (col.type) {
           case "string":
           case "text":
+          case "image":
             filteredBody[col.name] = "";
             break;
           case "number":
@@ -1291,6 +1514,38 @@ app
     };
   });
 
-app.listen(env.PORT);
+// ── Server startup ──
+if (env.FORCE_HTTPS && env.SSL_CERT_PATH && env.SSL_KEY_PATH) {
+  // Native Bun TLS server — serves HTTPS directly
+  const cert = Bun.file(env.SSL_CERT_PATH);
+  const key  = Bun.file(env.SSL_KEY_PATH);
 
-console.log(`API listening on http://localhost:${env.PORT}`);
+  app.listen({
+    port: env.HTTPS_PORT,
+    tls: {
+      cert: await cert.text(),
+      key:  await key.text(),
+    },
+  });
+
+  console.log(`🔒 HTTPS API listening on https://localhost:${env.HTTPS_PORT}`);
+  console.log(`   (HTTP on port ${env.PORT} will redirect to HTTPS)`);
+
+  // Also spin up a plain HTTP server solely to redirect → HTTPS
+  Bun.serve({
+    port: env.PORT,
+    fetch(req) {
+      const url = new URL(req.url);
+      url.protocol = "https:";
+      url.port = String(env.HTTPS_PORT);
+      return Response.redirect(url.toString(), 301);
+    },
+  });
+} else {
+  app.listen(env.PORT);
+  const scheme = env.FORCE_HTTPS ? "https" : "http";
+  console.log(`API listening on ${scheme}://localhost:${env.PORT}`);
+  if (!env.FORCE_HTTPS) {
+    console.log("   ℹ️  Set FORCE_HTTPS=true in .env to enable HTTPS enforcement.");
+  }
+}

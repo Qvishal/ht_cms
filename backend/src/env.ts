@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const EnvSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
+  HTTPS_PORT: z.coerce.number().int().min(1).max(65535).default(4433),
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
@@ -17,6 +18,19 @@ const EnvSchema = z.object({
     .default("true")
     .transform((val) => val === "true"),
   VARNISH_HOST: z.string().default("localhost:6081"),
+  // HTTPS / TLS enforcement
+  FORCE_HTTPS: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((val) => val === "true"),
+  SSL_CERT_PATH: z.string().optional(),  // path to TLS certificate (.pem / .crt)
+  SSL_KEY_PATH:  z.string().optional(),  // path to TLS private key (.pem / .key)
+  // Payload Encryption
+  PAYLOAD_ENCRYPTION_KEY: z.string().length(64).optional(), // 32-byte hex string
+  ENCRYPT_PAYLOADS: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((val) => val === "true"),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

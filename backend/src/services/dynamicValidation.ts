@@ -119,6 +119,16 @@ export function validateColumnValue(
       }
       return null;
 
+    case "image":
+      if (typeof value !== "string") {
+        return {
+          field,
+          code: "TYPE_MISMATCH",
+          message: `"${field}" must be a string (image URL or upload path)`,
+        };
+      }
+      return null; // Any non-empty string is a valid image value (URL or path)
+
     default:
       return {
         field,

@@ -27,7 +27,7 @@ const Ident = z.string().regex(/^[a-z][a-z0-9_]*$/, "Use lowercase snake_case (e
 
 const ColumnSchema = z.object({
   name: Ident,
-  type: z.enum(["string", "text", "number", "boolean", "date"]),
+  type: z.enum(["string", "text", "number", "boolean", "date", "image"]),
   required: z.boolean().default(false)
 });
 
@@ -253,6 +253,7 @@ function ColumnsEditor({
                     <SelectItem value="number">number</SelectItem>
                     <SelectItem value="boolean">boolean</SelectItem>
                     <SelectItem value="date">date</SelectItem>
+                    <SelectItem value="image">image</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

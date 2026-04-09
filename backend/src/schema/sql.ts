@@ -15,5 +15,7 @@ export function sqlTypeFor(colType: ColumnType): string {
     case "json":
       // Legacy: `json` was previously stored as jsonb but is now migrated to `text`.
       return "text";
+    case "image":
+      return "text";
   }
 }

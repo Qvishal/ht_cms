@@ -13,7 +13,8 @@ import {
   useReactTable
 } from "@tanstack/react-table";
 
-import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPostFile, apiPut } from "@/lib/api";
+import { getToken } from "@/lib/auth";
 import { isAdmin, useMe } from "@/lib/session";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +26,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { RichTextEditor } from "@/components/rich-text-editor";
 import { Skeleton } from "@/components/ui/skeleton";
 
-type ColumnType = "string" | "text" | "number" | "boolean" | "date" | "json";
+type ColumnType = "string" | "text" | "number" | "boolean" | "date" | "json" | "image";
 type SchemaColumn = { name: string; type: ColumnType; required?: boolean };
 type Row = Record<string, unknown> & { id: string };
 type TableAccess = {
@@ -595,6 +596,10 @@ function FieldEditor({
     );
   }
 
+  if (col.type === "image") {
+    return <ImageFieldEditor col={col} value={value} onChange={onChange} />;
+  }
+
   const inputType = col.type === "number" ? "number" : col.type === "date" ? "datetime-local" : "text";
 
   return (
@@ -609,6 +614,106 @@ function FieldEditor({
           else onChange(raw === "" ? undefined : raw);
         }}
       />
+    </div>
+  );
+}
+
+function ImageFieldEditor({
+  col,
+  value,
+  onChange
+}: {
+  col: SchemaColumn;
+  value: unknown;
+  onChange: (v: unknown) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+
+  // Build an authenticated preview URL for /uploads paths
+  function previewSrc(url: string): string {
+    if (!url) return url;
+    // Only append token for our own backend upload paths
+    if (url.includes("/uploads/")) {
+      const token = getToken();
+      if (token) {
+        const sep = url.includes("?") ? "&" : "?";
+        return `${url}${sep}token=${encodeURIComponent(token)}`;
+      }
+    }
+    return url;
+  }
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await apiPostFile("/upload", fd);
+      onChange(res.url);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const src = value ? previewSrc(value as string) : null;
+
+  return (
+    <div className="space-y-3 p-3 rounded-md border bg-muted/10">
+      <Label className="text-sm font-semibold">{col.name} (Image)</Label>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="flex-1 space-y-2">
+          <Label className="text-xs text-muted-foreground">URL Link</Label>
+          <Input
+            type="url"
+            value={(value as string) ?? ""}
+            onChange={(e) =>
+              onChange(e.target.value === "" ? undefined : e.target.value)
+            }
+            placeholder="https://example.com/image.png"
+          />
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-xs font-semibold text-muted-foreground">OR</div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Upload natively</Label>
+            <Input
+              type="file"
+              accept="image/*"
+              className="w-[200px]"
+              disabled={uploading}
+              onChange={handleFile}
+            />
+          </div>
+        </div>
+      </div>
+      {uploading ? (
+        <div className="text-xs text-muted-foreground animate-pulse">Uploading file...</div>
+      ) : src ? (
+        <div className="mt-2 space-y-1">
+          <div className="rounded-md border p-1 w-fit bg-muted/20">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={src}
+              alt="Preview"
+              className="h-32 w-auto object-contain rounded-sm"
+              onError={(e) => (e.currentTarget.style.display = 'none')}
+              onLoad={(e) => (e.currentTarget.style.display = 'block')}
+            />
+          </div>
+          <a
+            href={src}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-primary underline hover:opacity-80"
+          >
+            Open in new tab ↗
+          </a>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -667,6 +772,7 @@ function AddColumnDialog({ tableName, onDone }: { tableName: string; onDone: () 
               <SelectItem value="number">number</SelectItem>
               <SelectItem value="boolean">boolean</SelectItem>
               <SelectItem value="date">date</SelectItem>
+              <SelectItem value="image">image</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -827,6 +933,7 @@ function ManageColumnsDialog({ tableName, onDone }: { tableName: string; onDone:
                           <SelectItem value="number">number</SelectItem>
                           <SelectItem value="boolean">boolean</SelectItem>
                           <SelectItem value="date">date</SelectItem>
+                          <SelectItem value="image">image</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

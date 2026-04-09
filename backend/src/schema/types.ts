@@ -5,7 +5,8 @@ export type ColumnType =
   | "number"
   | "boolean"
   | "date"
-  | "json";
+  | "json"
+  | "image";
 
 export type ColumnDef = {
   name: string;
