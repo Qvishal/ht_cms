@@ -1,11 +1,11 @@
 /**
  * DYNAMIC API ROUTES - EXAMPLE INTEGRATION
- * 
+ *
  * This file shows how to integrate the dynamic API services into your Elysia app.
  * Copy these patterns into your main index.ts file.
- * 
+ *
  * Location: backend/src/index.ts
- * 
+ *
  * These routes REPLACE the existing `/data/:table` routes with enhanced versions
  * that use the new dynamic services for validation, filtering, and optimization.
  */
@@ -36,9 +36,9 @@ import {
 
 /**
  * LIST ROWS WITH ADVANCED FILTERING
- * 
+ *
  * GET /data/:table?limit=50&offset=0&orderBy=created_at&filters=[...]
- * 
+ *
  * Replaces the simple listRows() call with advanced filtering support.
  */
 export function listRowsRouteHandler() {
@@ -51,14 +51,24 @@ export function listRowsRouteHandler() {
 
       const table = params.table;
       await requireTableRead(authUser, table);
-      await validateTableAccess(table, { userId: authUser.id, isAdmin: authUser.role === "admin", visibilityMode: "GLOBAL_ACCESS" }, "read");
+      await validateTableAccess(
+        table,
+        {
+          userId: authUser.id,
+          isAdmin: authUser.role === "admin",
+          visibilityMode: "GLOBAL_ACCESS",
+        },
+        "read",
+      );
 
       const visibilityMode = await getVisibilityMode(table);
       const ctx = {
         userId: authUser.id,
         isAdmin: authUser.role === "admin",
         visibilityMode,
-        includeDeleted: authUser.role === "admin" && String(query.includeDeleted ?? "") === "1",
+        includeDeleted:
+          authUser.role === "admin" &&
+          String(query.includeDeleted ?? "") === "1",
       };
 
       // Parse query options
@@ -71,7 +81,10 @@ export function listRowsRouteHandler() {
       let filters: DynamicQueryOptions["filters"] = [];
       if (query.filters) {
         try {
-          filters = typeof query.filters === "string" ? JSON.parse(query.filters) : query.filters;
+          filters =
+            typeof query.filters === "string"
+              ? JSON.parse(query.filters)
+              : query.filters;
           if (!Array.isArray(filters)) filters = [filters];
         } catch {
           set.status = 400;
@@ -79,8 +92,14 @@ export function listRowsRouteHandler() {
         }
       }
 
-      const options: DynamicQueryOptions = { limit, offset, orderBy, ascending, filters };
-      
+      const options: DynamicQueryOptions = {
+        limit,
+        offset,
+        orderBy,
+        ascending,
+        filters,
+      };
+
       const rows = await fetchPagedRows(table, ctx, options);
       const total = await countRows(table, ctx, filters);
 
@@ -102,9 +121,9 @@ export function listRowsRouteHandler() {
 
 /**
  * CREATE ROW WITH VALIDATION
- * 
+ *
  * POST /data/:table
- * 
+ *
  * Replaces the simple createRow() with schema validation using dynamicValidation service.
  */
 export function createRowRouteHandler() {
@@ -117,12 +136,16 @@ export function createRowRouteHandler() {
 
       const table = params.table;
       await requireTableWrite(authUser, table);
-      
+
       const visibilityMode = await getVisibilityMode(table);
       const columns = await getColumns(table);
-      
+
       // VALIDATE REQUEST BODY
-      const validationErrors = validateRequestBody(body || {}, columns, "create");
+      const validationErrors = validateRequestBody(
+        body || {},
+        columns,
+        "create",
+      );
       if (validationErrors.length > 0) {
         set.status = 400;
         return formatValidationErrors(validationErrors);
@@ -130,7 +153,7 @@ export function createRowRouteHandler() {
 
       // SANITIZE INPUT (remove unknown and reserved fields)
       const sanitized = sanitizeInput(body || {}, columns);
-      
+
       const ctx = {
         userId: authUser.id,
         isAdmin: authUser.role === "admin",
@@ -158,9 +181,9 @@ export function createRowRouteHandler() {
 
 /**
  * UPDATE ROW WITH VALIDATION
- * 
+ *
  * PUT /data/:table/:id
- * 
+ *
  * Uses schema validation for partial updates.
  */
 export function updateRowRouteHandler() {
@@ -178,9 +201,13 @@ export function updateRowRouteHandler() {
 
       const visibilityMode = await getVisibilityMode(table);
       const columns = await getColumns(table);
-      
+
       // VALIDATE REQUEST BODY (for update, only validate fields being changed)
-      const validationErrors = validateRequestBody(body || {}, columns, "update");
+      const validationErrors = validateRequestBody(
+        body || {},
+        columns,
+        "update",
+      );
       if (validationErrors.length > 0) {
         set.status = 400;
         return formatValidationErrors(validationErrors);
@@ -227,9 +254,9 @@ export function updateRowRouteHandler() {
 
 /**
  * GET DISTINCT VALUES (for dropdowns, filters)
- * 
+ *
  * GET /data/:table/distinct/:field
- * 
+ *
  * Returns a list of distinct values for a field, useful for building filter UIs.
  */
 export function distinctValuesRouteHandler() {
@@ -266,12 +293,12 @@ export function distinctValuesRouteHandler() {
 
 /**
  * BULK DELETE ROWS (soft delete)
- * 
+ *
  * POST /data/:table/bulk-delete
  * {
  *   "ids": ["id1", "id2", "id3"]
  * }
- * 
+ *
  * Efficiently soft-delete multiple rows.
  */
 export function bulkDeleteRouteHandler() {
@@ -319,9 +346,9 @@ export function bulkDeleteRouteHandler() {
 
 /**
  * GET TABLE SCHEMA (API documentation)
- * 
+ *
  * GET /tables/:table/schema
- * 
+ *
  * Returns the table schema, columns, and data types for frontend API builders.
  */
 export function getTableSchemaRouteHandler() {
@@ -346,9 +373,9 @@ export function getTableSchemaRouteHandler() {
 
 /**
  * LIST ALL TABLE SCHEMAS (for API explorer)
- * 
+ *
  * GET /tables/schemas
- * 
+ *
  * Returns schemas for all tables the user has access to.
  */
 export function listTableSchemasRouteHandler() {
@@ -364,9 +391,7 @@ export function listTableSchemasRouteHandler() {
           ? await getTables()
           : await listTablesForUser(authUser.id);
 
-      const schemas = await Promise.all(
-        tables.map((t) => getTableSchema(t))
-      );
+      const schemas = await Promise.all(tables.map((t) => getTableSchema(t)));
 
       return { schemas };
     } catch (error) {
@@ -382,9 +407,9 @@ export function listTableSchemasRouteHandler() {
 
 /**
  * Add this to registry.ts ensurePhysicalTable() function, after creating the table:
- * 
+ *
  *   await ensureTableIndexes(table.name);
- * 
+ *
  * This ensures all new tables automatically get optimized indexes.
  */
 export const AUTO_INDEXING_CODE = `
@@ -404,25 +429,25 @@ export async function ensurePhysicalTable(table: TableDef): Promise<void> {
 
 /**
  * To integrate these routes into your Elysia app:
- * 
+ *
  * 1. Import the new services:
  *    - dynamicApi.ts
  *    - dynamicValidation.ts
  *    - dynamicIndexing.ts
- * 
+ *
  * 2. Replace existing data routes with the new handlers:
  *    .get("/data/:table", listRowsRouteHandler())
  *    .post("/data/:table", createRowRouteHandler())
  *    .put("/data/:table/:id", updateRowRouteHandler())
- * 
+ *
  * 3. Add new routes:
  *    .get("/data/:table/distinct/:field", distinctValuesRouteHandler())
  *    .post("/data/:table/bulk-delete", bulkDeleteRouteHandler())
  *    .get("/tables/:table/schema", getTableSchemaRouteHandler())
  *    .get("/tables/schemas", listTableSchemasRouteHandler())
- * 
+ *
  * 4. Update registry.ts to auto-index tables
- * 
+ *
  * All existing features (RBAC, soft delete, audit logs, versioning) continue to work
  * without modification. The new services enhance them with validation, filtering,
  * and performance optimization.

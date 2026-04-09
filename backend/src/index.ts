@@ -1,9 +1,11 @@
 import { cors } from "@elysiajs/cors";
 import { jwt } from "@elysiajs/jwt";
+import { swagger } from "@elysiajs/swagger";
 import { Elysia } from "elysia";
 import { z } from "zod";
 
 import { hashPassword, verifyPassword } from "./auth/password";
+import { dynamicSwaggerRoutes } from "./routes/swaggerDynamic";
 import {
   requireAdmin,
   requireAuth,
@@ -30,6 +32,7 @@ import {
   updateRow,
 } from "./services/crud";
 import { listAuditLogs, writeAuditLog } from "./services/audit";
+import { validateRequestBody } from "./services/dynamicValidation";
 import {
   type AccessType,
   getAccessTypeForUserOnTableName,
@@ -88,13 +91,25 @@ await migrate();
 
 const app = new Elysia()
   .use(
+    swagger({
+      path: "/swagger",
+      documentation: {
+        info: {
+          title: "HT CMS Core API",
+          version: "1.0.0",
+        },
+      },
+    }),
+  )
+  .use(dynamicSwaggerRoutes)
+  .use(
     cors({
       origin: env.FRONTEND_ORIGIN,
       credentials: true,
       allowedHeaders: ["Content-Type", "Authorization"],
     }),
   )
-  .use(jwt({ name: "jwt", secret: env.JWT_SECRET }))
+  .use(jwt({ name: "jwt", secret: env.JWT_SECRET, exp: "1d" }))
   .derive(async ({ headers, jwt, set }) => {
     const auth = headers.authorization;
     if (!auth?.startsWith("Bearer ")) return { authUser: null };
@@ -123,17 +138,18 @@ const app = new Elysia()
   })
   .onError(({ code, error, set }) => {
     console.error(code, error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     const status =
       code === "VALIDATION"
         ? 400
-        : error.message.includes("Unauthorized")
+        : errorMessage.includes("Unauthorized")
           ? 401
-          : error.message.includes("Forbidden")
+          : errorMessage.includes("Forbidden")
             ? 403
             : 400;
     set.status = status;
     return {
-      error: error.message,
+      error: errorMessage,
       code,
     };
   });
@@ -148,10 +164,9 @@ try {
 
 // Configure caching
 caching.setCacheConfig({
-  strategy: (process.env.CACHE_STRATEGY as
-    | "HYBRID"
-    | "REDIS_ONLY"
-    | "DISABLED") || "HYBRID",
+  strategy:
+    (process.env.CACHE_STRATEGY as "HYBRID" | "REDIS_ONLY" | "DISABLED") ||
+    "HYBRID",
   publicOnly: process.env.CACHE_PUBLIC_ONLY !== "false",
   ttl: {
     query: 300, // 5 minutes
@@ -163,9 +178,14 @@ caching.setCacheConfig({
 });
 
 app
-  .get("/health", async () => {
-    await db`select 1`;
-    return { ok: true };
+  .get("/health", async ({ set }) => {
+    try {
+      await db`select 1`;
+      return { db: "ok" };
+    } catch (e) {
+      set.status = 503;
+      return { db: "down", error: (e as Error).message };
+    }
   })
   .get("/setup/status", async () => {
     const hasAdmin = await hasAnyAdmin();
@@ -232,13 +252,21 @@ app
       return { error: "Invalid credentials" };
     }
 
-    const token = await jwt.sign({
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-    });
+    // Look for existing active token
+    const existingToken = await caching.getActiveUserToken(user.id);
+    let token = existingToken;
 
-    // ✅ CACHE SESSION DATA
+    if (!token) {
+      token = await jwt.sign({
+        sub: user.id,
+        email: user.email,
+        role: user.role,
+      });
+      // Cache the active token in Redis
+      await caching.cacheActiveUserToken(user.id, token);
+    }
+
+    // ✅ CACHE SESSION DATA (we renew the session metadata whether token was cached or new)
     await caching.cacheSession(`session:${user.id}:${token}`, {
       userId: user.id,
       email: user.email,
@@ -307,7 +335,10 @@ app
       actionType: "STRUCTURE_CHANGE",
       tableId: null,
       oldValue: null,
-      newValue: { event: "SCHEMA_APPLIED", tables: parsed.tables.map((t) => t.name) },
+      newValue: {
+        event: "SCHEMA_APPLIED",
+        tables: parsed.tables.map((t) => t.name),
+      },
     });
     return applied;
   })
@@ -436,7 +467,7 @@ app
           column: params.column,
           type: parsed.type ?? existing.type,
           required: parsed.required ?? existing.required,
-          active: parsed.active ?? (existing.active !== false),
+          active: parsed.active ?? existing.active !== false,
         },
       });
 
@@ -606,10 +637,15 @@ app
     const offset = z.coerce.number().int().min(0).catch(0).parse(query.offset);
 
     // Try Redis cache first
-    const cachedRows = await caching.getCachedQueryResult(params.table, {}, limit, offset);
+    const cachedRows = await caching.getCachedQueryResult(
+      params.table,
+      [],
+      limit,
+      offset,
+    );
     if (cachedRows) {
-      set.header("Cache-Control", "public, max-age=120");
-      set.header("X-Cache", "HIT");
+      set.headers["Cache-Control"] = "public, max-age=120";
+      set.headers["X-Cache"] = "HIT";
       return cachedRows;
     }
 
@@ -630,19 +666,19 @@ app
     });
 
     // Cache the result
-    await caching.cacheQueryResult(params.table, {}, limit, offset, { rows });
+    await caching.cacheQueryResult(params.table, [], limit, offset, { rows });
 
     // Set Varnish cache header
-    set.header("Cache-Control", "public, max-age=120");
-    set.header("X-Cache", "MISS");
+    set.headers["Cache-Control"] = "public, max-age=120";
+    set.headers["X-Cache"] = "MISS";
     return { rows };
   })
   .get("/api/public/:table/:id", async ({ params, set }) => {
     // Try Redis cache for individual row
     const cachedRow = await caching.getCachedRow(params.table, params.id);
     if (cachedRow) {
-      set.header("Cache-Control", "public, max-age=300");
-      set.header("X-Cache", "HIT");
+      set.headers["Cache-Control"] = "public, max-age=300";
+      set.headers["X-Cache"] = "HIT";
       return { row: cachedRow };
     }
 
@@ -669,8 +705,8 @@ app
     // Cache individual row
     await caching.cacheRow(params.table, params.id, row);
 
-    set.header("Cache-Control", "public, max-age=300");
-    set.header("X-Cache", "MISS");
+    set.headers["Cache-Control"] = "public, max-age=300";
+    set.headers["X-Cache"] = "MISS";
     return { row };
   })
   // Private data endpoints (authenticated users)
@@ -679,7 +715,7 @@ app
       set.status = 401;
       return { error: "Unauthorized - Token required" };
     }
-    await requireTableRead(authUser, params.table);
+
     const limit = z.coerce
       .number()
       .int()
@@ -688,7 +724,32 @@ app
       .catch(50)
       .parse(query.limit);
     const offset = z.coerce.number().int().min(0).catch(0).parse(query.offset);
-    const includeDeleted = authUser.role === "admin" && String(query.includeDeleted ?? "") === "1";
+    const includeDeleted =
+      authUser.role === "admin" && String(query.includeDeleted ?? "") === "1";
+
+    // Track active filters for caching determinism
+    const filters = includeDeleted
+      ? [{ field: "includeDeleted", operator: "eq", value: true }]
+      : [];
+
+    // Optimize Response Time: check DB cache before invoking any slower metadata constraints
+    const cachedRows = await caching.getCachedUserQueryResult(
+      params.table,
+      authUser.id,
+      filters,
+      limit,
+      offset,
+    );
+    if (cachedRows) {
+      set.headers["Cache-Control"] = "private, max-age=120";
+      set.headers["Vary"] = "Authorization, Origin";
+      set.headers["X-Cache"] = "HIT";
+      return cachedRows;
+    }
+
+    // RBAC check (miss)
+    await requireTableRead(authUser, params.table);
+    
     const visibilityMode = await getVisibilityMode(params.table);
     const rows = await listRows(params.table, limit, offset, {
       userId: authUser.id,
@@ -696,6 +757,20 @@ app
       visibilityMode,
       includeDeleted,
     });
+
+    // Cache the resolved DB chunk for subsequents
+    await caching.cacheUserQueryResult(
+      params.table,
+      authUser.id,
+      filters,
+      limit,
+      offset,
+      { rows },
+    );
+
+    set.headers["Cache-Control"] = "private, max-age=120";
+    set.headers["Vary"] = "Authorization, Origin";
+    set.headers["X-Cache"] = "MISS";
     return { rows };
   })
   .get("/data/:table/:id", async ({ params, query, authUser, set }) => {
@@ -705,7 +780,8 @@ app
     }
     await requireTableRead(authUser, params.table);
     const visibilityMode = await getVisibilityMode(params.table);
-    const includeDeleted = authUser.role === "admin" && String(query.includeDeleted ?? "") === "1";
+    const includeDeleted =
+      authUser.role === "admin" && String(query.includeDeleted ?? "") === "1";
     const row = await getRow(params.table, params.id, {
       userId: authUser.id,
       isAdmin: authUser.role === "admin",
@@ -726,9 +802,58 @@ app
     }
     await requireTableWrite(authUser, params.table);
     const visibilityMode = await getVisibilityMode(params.table);
+
+    // Get columns for validation (include hidden columns for validation purposes)
+    const columns = await getColumns(params.table, true);
+
+    // Validate request body against visible columns only
+    const validationErrors = validateRequestBody((body as Record<string, unknown>) ?? {}, columns, "create");
+    if (validationErrors.length > 0) {
+      set.status = 400;
+      return { error: "Validation failed", details: validationErrors };
+    }
+
+    // Filter input: include visible columns + provide defaults for hidden required columns
+    const visibleColumns = columns.filter((col) => col.active !== false);
+    const visibleColumnNames = new Set(visibleColumns.map((c) => c.name));
+
+    const filteredBody: Record<string, unknown> = {};
+
+    // Add visible columns from input
+    for (const [key, value] of Object.entries((body as Record<string, unknown>) ?? {})) {
+      if (visibleColumnNames.has(key)) {
+        filteredBody[key] = value;
+      }
+    }
+
+    // Add default values for hidden required columns not in input
+    for (const col of columns) {
+      if (col.active === false && col.required && !(col.name in filteredBody)) {
+        // Provide sensible defaults based on column type
+        switch (col.type) {
+          case "string":
+          case "text":
+            filteredBody[col.name] = "";
+            break;
+          case "number":
+            filteredBody[col.name] = 0;
+            break;
+          case "boolean":
+            filteredBody[col.name] = false;
+            break;
+          case "date":
+            filteredBody[col.name] = new Date().toISOString().split("T")[0];
+            break;
+          case "json":
+            filteredBody[col.name] = "{}";
+            break;
+        }
+      }
+    }
+
     const row = await createRow(
       params.table,
-      (body ?? {}) as Record<string, unknown>,
+      filteredBody as Record<string, unknown>,
       {
         userId: authUser.id,
         isAdmin: authUser.role === "admin",
@@ -753,10 +878,29 @@ app
     }
     await requireTableWrite(authUser, params.table);
     const visibilityMode = await getVisibilityMode(params.table);
+
+    // Get columns for validation (include hidden columns for validation purposes)
+    const columns = await getColumns(params.table, true);
+
+    // Validate request body against visible columns only
+    const validationErrors = validateRequestBody((body as Record<string, unknown>) ?? {}, columns, "update");
+    if (validationErrors.length > 0) {
+      set.status = 400;
+      return { error: "Validation failed", details: validationErrors };
+    }
+
+    // Filter input: include only visible columns (don't add defaults for updates)
+    const visibleColumns = columns.filter((col) => col.active !== false);
+    const visibleColumnNames = new Set(visibleColumns.map((c) => c.name));
+
+    const filteredBody = Object.fromEntries(
+      Object.entries((body as Record<string, unknown>) ?? {}).filter(([key]) => visibleColumnNames.has(key)),
+    );
+
     const row = await updateRow(
       params.table,
       params.id,
-      (body ?? {}) as Record<string, unknown>,
+      filteredBody as Record<string, unknown>,
       {
         userId: authUser.id,
         isAdmin: authUser.role === "admin",
@@ -1133,19 +1277,18 @@ app
     await caching.clearAllCaches();
     return { ok: true, message: "All caches cleared" };
   })
-  .post("/admin/cache/invalidate/:table", async ({
-    params,
-    authUser,
-    set,
-  }) => {
+  .post("/admin/cache/invalidate/:table", async ({ params, authUser, set }) => {
     // Admin-only endpoint
     if (!authUser || authUser.role !== "admin") {
       set.status = 403;
       return { error: "Forbidden - Admin only" };
     }
 
-    await caching.invalidateTable(params.table);
-    return { ok: true, message: `Cache invalidated for table: ${params.table}` };
+    await caching.invalidateTableCache(params.table);
+    return {
+      ok: true,
+      message: `Cache invalidated for table: ${params.table}`,
+    };
   });
 
 app.listen(env.PORT);

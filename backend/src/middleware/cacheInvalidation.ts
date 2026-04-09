@@ -5,7 +5,10 @@
  */
 
 import caching from "../services/caching";
-import { buildTableInvalidationPattern, buildListInvalidationPattern } from "../lib/cacheKeys";
+import {
+  buildTableInvalidationPattern,
+  buildListInvalidationPattern,
+} from "../lib/cacheKeys";
 
 export interface InvalidationContext {
   tableName: string;
@@ -39,14 +42,19 @@ async function purgeFromVarnish(pattern: string): Promise<void> {
     }
   } catch (e) {
     // Varnish might not be running in development
-    console.warn(`⚠ Could not reach Varnish at ${varnishUrl}:`, (e as Error).message);
+    console.warn(
+      `⚠ Could not reach Varnish at ${varnishUrl}:`,
+      (e as Error).message,
+    );
   }
 }
 
 /**
  * Invalidate all caches related to a table
  */
-export async function invalidateTableCaches(context: InvalidationContext): Promise<void> {
+export async function invalidateTableCaches(
+  context: InvalidationContext,
+): Promise<void> {
   const { tableName, operation } = context;
 
   console.log(`[CACHE INVALIDATION] ${operation} on table: ${tableName}`);
@@ -77,7 +85,9 @@ export async function invalidateTableCaches(context: InvalidationContext): Promi
 /**
  * Invalidate specific row cache
  */
-export async function invalidateRowCaches(context: InvalidationContext): Promise<void> {
+export async function invalidateRowCaches(
+  context: InvalidationContext,
+): Promise<void> {
   const { tableName, rowId, operation } = context;
 
   if (!rowId) {
@@ -85,7 +95,9 @@ export async function invalidateRowCaches(context: InvalidationContext): Promise
     return;
   }
 
-  console.log(`[CACHE INVALIDATION] ${operation} on row: ${tableName}/${rowId}`);
+  console.log(
+    `[CACHE INVALIDATION] ${operation} on row: ${tableName}/${rowId}`,
+  );
 
   try {
     // 1. Clear Redis row cache
@@ -119,9 +131,11 @@ export async function invalidateRowCaches(context: InvalidationContext): Promise
  */
 export async function invalidateUserCaches(
   userId: string,
-  tableName?: string
+  tableName?: string,
 ): Promise<void> {
-  console.log(`[CACHE INVALIDATION] User: ${userId}, Table: ${tableName || "all"}`);
+  console.log(
+    `[CACHE INVALIDATION] User: ${userId}, Table: ${tableName || "all"}`,
+  );
 
   try {
     // 1. Invalidate user's RBAC cache
@@ -158,7 +172,9 @@ export async function invalidateSessionCache(sessionId: string): Promise<void> {
 /**
  * Smart cache invalidation based on operation type
  */
-export async function smartInvalidate(context: InvalidationContext): Promise<void> {
+export async function smartInvalidate(
+  context: InvalidationContext,
+): Promise<void> {
   const { operation, tableName, rowId } = context;
 
   switch (operation) {
@@ -196,7 +212,9 @@ export async function smartInvalidate(context: InvalidationContext): Promise<voi
 /**
  * Cache invalidation after table schema change
  */
-export async function invalidateTableSchemaCaches(tableName: string): Promise<void> {
+export async function invalidateTableSchemaCaches(
+  tableName: string,
+): Promise<void> {
   console.log(`[CACHE INVALIDATION] Schema change for table: ${tableName}`);
 
   try {
@@ -217,8 +235,13 @@ export async function invalidateTableSchemaCaches(tableName: string): Promise<vo
 /**
  * Cache invalidation after permission change
  */
-export async function invalidatePermissionCaches(userId: string, tableId: string): Promise<void> {
-  console.log(`[CACHE INVALIDATION] Permission change - User: ${userId}, Table: ${tableId}`);
+export async function invalidatePermissionCaches(
+  userId: string,
+  tableId: string,
+): Promise<void> {
+  console.log(
+    `[CACHE INVALIDATION] Permission change - User: ${userId}, Table: ${tableId}`,
+  );
 
   try {
     // Invalidate user's RBAC cache
@@ -254,7 +277,7 @@ export async function cacheInvalidationMiddleware(
   tableName: string,
   rowId?: string,
   previousData?: any,
-  newData?: any
+  newData?: any,
 ): Promise<void> {
   await smartInvalidate({
     operation,

@@ -1,6 +1,6 @@
 /**
  * Dynamic API Service
- * 
+ *
  * Provides a unified service for dynamically generating APIs for any table
  * created during setup or by admin. All APIs are auto-validated, authorized,
  * and integrated with audit logs and versioning.
@@ -9,7 +9,11 @@
 import { db } from "../db";
 import { assertIdent, quoteIdent } from "../lib/ids";
 import type { ColumnDef } from "../schema/types";
-import { getTableInfoByName, tableExistsInRegistry, getColumns } from "./registry";
+import {
+  getTableInfoByName,
+  tableExistsInRegistry,
+  getColumns,
+} from "./registry";
 import { getVisibilityMode } from "./tableMetadata";
 import type { DataContext } from "./crud";
 
@@ -31,7 +35,7 @@ export async function validateTableAccess(
   requiredAccess: "read" | "write",
 ) {
   assertIdent(table, "table");
-  
+
   const exists = await tableExistsInRegistry(table);
   if (!exists) {
     throw new Error(`Table "${table}" does not exist`);
@@ -84,7 +88,9 @@ export function buildDynamicWhere(
         where.push(`${quoteIdent(filter.field)} ilike $${params.length}`);
       } else if (filter.operator === "in") {
         if (!Array.isArray(filter.value) || filter.value.length === 0) {
-          throw new Error(`Invalid 'in' filter for "${filter.field}": must be non-empty array`);
+          throw new Error(
+            `Invalid 'in' filter for "${filter.field}": must be non-empty array`,
+          );
         }
         const placeholders = filter.value
           .map((v) => {
@@ -105,9 +111,10 @@ export function buildDynamicWhere(
 /**
  * Build ORDER BY clause safely
  */
-export function buildOrderBy(
-  options?: DynamicQueryOptions,
-): { orderSql: string; params: unknown[] } {
+export function buildOrderBy(options?: DynamicQueryOptions): {
+  orderSql: string;
+  params: unknown[];
+} {
   let orderSql = "order by created_at desc";
   const params: unknown[] = [];
 
@@ -129,15 +136,16 @@ export async function fetchPagedRows(
   options?: DynamicQueryOptions,
 ): Promise<Record<string, unknown>[]> {
   assertIdent(table, "table");
-  
+
   const { whereClauses, params } = buildDynamicWhere(ctx, options?.filters);
   const { orderSql } = buildOrderBy(options);
-  
+
   const limit = Math.min(options?.limit ?? 50, 200);
   const offset = options?.offset ?? 0;
 
   params.push(limit, offset);
-  const whereClause = whereClauses.length > 0 ? `where ${whereClauses.join(" and ")}` : "";
+  const whereClause =
+    whereClauses.length > 0 ? `where ${whereClauses.join(" and ")}` : "";
 
   const rows = await db.unsafe(
     `select * from ${quoteIdent(table)} ${whereClause} ${orderSql} limit $${params.length - 1} offset $${params.length}`,
@@ -156,9 +164,10 @@ export async function countRows(
   filters?: DynamicQueryOptions["filters"],
 ): Promise<number> {
   assertIdent(table, "table");
-  
+
   const { whereClauses, params } = buildDynamicWhere(ctx, filters);
-  const whereClause = whereClauses.length > 0 ? `where ${whereClauses.join(" and ")}` : "";
+  const whereClause =
+    whereClauses.length > 0 ? `where ${whereClauses.join(" and ")}` : "";
 
   const result = (await db.unsafe(
     `select count(*)::int as count from ${quoteIdent(table)} ${whereClause}`,
@@ -181,7 +190,8 @@ export async function fetchDistinctValues(
   assertIdent(field, "field");
 
   const { whereClauses, params } = buildDynamicWhere(ctx);
-  const whereClause = whereClauses.length > 0 ? `where ${whereClauses.join(" and ")}` : "";
+  const whereClause =
+    whereClauses.length > 0 ? `where ${whereClauses.join(" and ")}` : "";
 
   params.push(limit);
   const rows = (await db.unsafe(
@@ -201,7 +211,7 @@ export async function bulkSoftDelete(
   ctx: DataContext,
 ): Promise<{ deleted: number }> {
   if (!ids.length) return { deleted: 0 };
-  
+
   assertIdent(table, "table");
 
   const idPlaceholders = ids
@@ -231,7 +241,7 @@ export async function bulkUpdate(
   if (!updates.length) return { updated: 0 };
 
   assertIdent(table, "table");
-  
+
   let updatedCount = 0;
 
   for (const { id, data } of updates) {
@@ -266,7 +276,7 @@ export async function bulkUpdate(
  */
 export async function getTableSchema(table: string) {
   assertIdent(table, "table");
-  
+
   const tableInfo = await getTableInfoByName(table);
   if (!tableInfo) {
     throw new Error(`Table "${table}" not found`);
@@ -284,6 +294,13 @@ export async function getTableSchema(table: string) {
       type: c.type,
       required: c.required,
     })),
-    reservedFields: ["id", "created_at", "updated_at", "created_by", "is_deleted", "deleted_at"],
+    reservedFields: [
+      "id",
+      "created_at",
+      "updated_at",
+      "created_by",
+      "is_deleted",
+      "deleted_at",
+    ],
   };
 }

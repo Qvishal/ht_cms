@@ -1,6 +1,6 @@
 /**
  * Dynamic Validation Middleware
- * 
+ *
  * Provides schema-driven validation for all dynamic API requests.
  * Validates request body against column definitions before CRUD operations.
  */
@@ -130,14 +130,18 @@ export function validateColumnValue(
 
 /**
  * Validate an entire request body against column definitions
+ * Skips validation for hidden (inactive) columns
  */
 export function validateRequestBody(
   input: Record<string, unknown>,
-  columns: ColumnDef[],
+  columns: (ColumnDef & { active?: boolean })[],
   mode: "create" | "update" = "create",
 ): ValidationError[] {
   const errors: ValidationError[] = [];
-  const allowedFields = new Set(columns.map((c) => c.name));
+
+  // Filter out hidden columns (active=false) from validation
+  const visibleColumns = columns.filter((col) => col.active !== false);
+  const allowedFields = new Set(visibleColumns.map((c) => c.name));
 
   // Check for unknown fields
   for (const key of Object.keys(input)) {
@@ -147,12 +151,16 @@ export function validateRequestBody(
     }
   }
 
-  // Validate each column
-  for (const col of columns) {
+  // Validate each visible column
+  for (const col of visibleColumns) {
     const value = input[col.name];
 
-    // In create mode, all required fields must be present
-    if (mode === "create" && col.required && (value === undefined || value === null)) {
+    // In create mode, all required visible columns must be present
+    if (
+      mode === "create" &&
+      col.required &&
+      (value === undefined || value === null)
+    ) {
       errors.push({
         field: col.name,
         code: "REQUIRED",
@@ -188,7 +196,14 @@ export function sanitizeInput(
   columns: ColumnDef[],
 ): Record<string, unknown> {
   const allowed = new Set(columns.map((c) => c.name));
-  const reserved = new Set(["id", "created_at", "updated_at", "created_by", "is_deleted", "deleted_at"]);
+  const reserved = new Set([
+    "id",
+    "created_at",
+    "updated_at",
+    "created_by",
+    "is_deleted",
+    "deleted_at",
+  ]);
   const output: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(input)) {

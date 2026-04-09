@@ -9,6 +9,14 @@ const EnvSchema = z.object({
   REDIS_URL: z.string().url().default("redis://127.0.0.1:6379"),
   JWT_SECRET: z.string().min(16).or(z.string().min(1)),
   FRONTEND_ORIGIN: z.string().url().default("http://localhost:3001"),
+  CACHE_STRATEGY: z
+    .enum(["HYBRID", "REDIS_ONLY", "DISABLED"])
+    .default("HYBRID"),
+  CACHE_PUBLIC_ONLY: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((val) => val === "true"),
+  VARNISH_HOST: z.string().default("localhost:6081"),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

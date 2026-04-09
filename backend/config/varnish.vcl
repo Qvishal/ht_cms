@@ -34,13 +34,13 @@ sub vcl_recv {
     return (pass);
   }
 
-  # Skip caching for authenticated requests
-  if (req.http.Cookie ~ "auth" || req.http.Authorization) {
+  # Skip caching for authenticated requests UNLESS it's the specific /data/ API edge cache
+  if ((req.http.Cookie ~ "auth" || req.http.Authorization) && req.url !~ "^/data/") {
     return (pass);
   }
 
-  # Only cache public API routes
-  if (req.url !~ "^/api/public/") {
+  # Only cache public API and private data routes
+  if (req.url !~ "^/api/public/" && req.url !~ "^/data/") {
     return (pass);
   }
 
@@ -87,10 +87,9 @@ sub vcl_backend_response {
     return (deliver);
   }
 
-  # Cache only public responses
+  # Cache only public and authorized edge responses
   if (beresp.http.Cache-Control ~ "no-cache" ||
-      beresp.http.Cache-Control ~ "no-store" ||
-      beresp.http.Cache-Control ~ "private") {
+      beresp.http.Cache-Control ~ "no-store") {
     set beresp.uncacheable = true;
     return (deliver);
   }

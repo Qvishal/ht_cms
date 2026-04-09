@@ -1,6 +1,6 @@
 /**
  * Dynamic API Types
- * 
+ *
  * TypeScript interfaces and types for the dynamic API system.
  * Provides type safety and IDE autocompletion for all dynamic API operations.
  */
@@ -217,7 +217,12 @@ export interface ColumnMetadata extends ColumnDef {
 export interface AuditLogEntry {
   id: string;
   userId: string;
-  actionType: "CREATE" | "UPDATE" | "DELETE" | "BULK_DELETE" | "STRUCTURE_CHANGE";
+  actionType:
+    | "CREATE"
+    | "UPDATE"
+    | "DELETE"
+    | "BULK_DELETE"
+    | "STRUCTURE_CHANGE";
   tableId: string | null;
   tableName?: string;
   oldValue: unknown;
@@ -266,10 +271,13 @@ export function buildQueryUrl(
 ): string {
   const url = new URL(`${baseUrl}/data/${table}`);
 
-  if (options?.limit !== undefined) url.searchParams.set("limit", String(options.limit));
-  if (options?.offset !== undefined) url.searchParams.set("offset", String(options.offset));
+  if (options?.limit !== undefined)
+    url.searchParams.set("limit", String(options.limit));
+  if (options?.offset !== undefined)
+    url.searchParams.set("offset", String(options.offset));
   if (options?.orderBy) url.searchParams.set("orderBy", options.orderBy);
-  if (options?.ascending !== undefined) url.searchParams.set("ascending", String(options.ascending));
+  if (options?.ascending !== undefined)
+    url.searchParams.set("ascending", String(options.ascending));
   if (options?.filters && options.filters.length > 0) {
     url.searchParams.set("filters", JSON.stringify(options.filters));
   }

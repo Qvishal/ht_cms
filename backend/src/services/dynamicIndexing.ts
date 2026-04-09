@@ -1,12 +1,12 @@
 /**
  * Dynamic Indexing Service
- * 
+ *
  * Automatically creates optimal indexes for new tables:
  * - Primary key (id) - added by default
  * - created_by - for USER_SCOPED visibility filtering
  * - is_deleted + created_at - for soft delete + sorting query optimization
  * - created_at - for default ordering
- * 
+ *
  * These indexes ensure optimal performance for common query patterns.
  */
 
@@ -25,7 +25,7 @@ export interface IndexSpec {
  */
 export function getDefaultIndexes(tableName: string): IndexSpec[] {
   assertIdent(tableName, "table");
-  
+
   return [
     {
       name: `idx_${tableName}_created_by`,
@@ -56,7 +56,7 @@ async function indexExists(indexName: string): Promise<boolean> {
     `select exists(select 1 from pg_indexes where indexname = $1) as exists`,
     [indexName],
   )) as { exists: boolean }[];
-  
+
   return result[0]?.exists ?? false;
 }
 
@@ -83,7 +83,9 @@ async function createIndex(tableName: string, spec: IndexSpec): Promise<void> {
     await db.unsafe(sql);
     console.debug(`Created index ${spec.name}`);
   } catch (e) {
-    console.warn(`Failed to create index ${spec.name}: ${(e as Error).message}`);
+    console.warn(
+      `Failed to create index ${spec.name}: ${(e as Error).message}`,
+    );
     // Don't throw; missing indexes are not critical, just suboptimal
   }
 }
@@ -95,7 +97,7 @@ export async function ensureTableIndexes(tableName: string): Promise<void> {
   assertIdent(tableName, "table");
 
   const indexes = getDefaultIndexes(tableName);
-  
+
   for (const spec of indexes) {
     await createIndex(tableName, spec);
   }
@@ -112,8 +114,9 @@ export async function createCustomIndex(
   assertIdent(tableName, "table");
   for (const col of columnNames) assertIdent(col, "column");
 
-  const indexName = options?.indexName ?? `idx_${tableName}_${columnNames.join("_")}`;
-  
+  const indexName =
+    options?.indexName ?? `idx_${tableName}_${columnNames.join("_")}`;
+
   const spec: IndexSpec = {
     name: indexName,
     columns: columnNames,
@@ -127,7 +130,9 @@ export async function createCustomIndex(
 /**
  * List all indexes on a table
  */
-export async function listTableIndexes(tableName: string): Promise<IndexSpec[]> {
+export async function listTableIndexes(
+  tableName: string,
+): Promise<IndexSpec[]> {
   assertIdent(tableName, "table");
 
   const result = (await db.unsafe(

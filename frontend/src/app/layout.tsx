@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/lib/theme";
+import HealthCheck from "@/components/HealthCheck";
+import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 
 export const metadata: Metadata = {
   title: "HT CMS Admin",
@@ -27,7 +29,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: setInitialThemeScript }} />
       </head>
       <body>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <HealthCheck />
+          <ServiceWorkerRegister />
+          {children}
+        </ThemeProvider>
         <Toaster richColors closeButton />
       </body>
     </html>

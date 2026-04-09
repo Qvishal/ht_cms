@@ -19,11 +19,9 @@ export interface CacheKeyOptions {
  */
 export function buildCacheKey(
   tableName: string,
-  options: CacheKeyOptions = {}
+  options: CacheKeyOptions = {},
 ): string {
-  const filterHash = options.filters
-    ? hashFilters(options.filters)
-    : "all";
+  const filterHash = options.filters ? hashFilters(options.filters) : "all";
 
   const limit = options.limit || 50;
   const offset = options.offset || 0;
@@ -43,7 +41,10 @@ export function buildRowCacheKey(tableName: string, rowId: string): string {
  * Build cache key for distinct values
  * Format: table:{tableName}:distinct:{field}
  */
-export function buildDistinctCacheKey(tableName: string, field: string): string {
+export function buildDistinctCacheKey(
+  tableName: string,
+  field: string,
+): string {
   return `table:${tableName}:distinct:${field}`;
 }
 
@@ -54,11 +55,9 @@ export function buildDistinctCacheKey(tableName: string, field: string): string 
 export function buildUserScopedCacheKey(
   tableName: string,
   userId: string,
-  options: CacheKeyOptions = {}
+  options: CacheKeyOptions = {},
 ): string {
-  const filterHash = options.filters
-    ? hashFilters(options.filters)
-    : "all";
+  const filterHash = options.filters ? hashFilters(options.filters) : "all";
 
   const limit = options.limit || 50;
   const offset = options.offset || 0;
@@ -88,7 +87,7 @@ export function buildListInvalidationPattern(tableName: string): string {
  */
 export function buildUserListInvalidationPattern(
   tableName: string,
-  userId: string
+  userId: string,
 ): string {
   return `table:${tableName}:user:${userId}:list:*`;
 }
@@ -98,7 +97,7 @@ export function buildUserListInvalidationPattern(
  * Creates consistent hash regardless of filter order
  */
 function hashFilters(filters: any[]): string {
-  if (!filters || filters.length === 0) return "all";
+  if (!filters || !Array.isArray(filters) || filters.length === 0) return "all";
 
   // Normalize filters
   const normalized = filters
@@ -131,9 +130,7 @@ function simpleHash(str: string): string {
 /**
  * Parse cache key to extract information
  */
-export function parseCacheKey(
-  key: string
-): {
+export function parseCacheKey(key: string): {
   type: string;
   tableName: string;
   details: any;
@@ -174,7 +171,7 @@ export function parseCacheKey(
 
   // table:products:user:user123:list:abc123:20:0
   const userScopedMatch = key.match(
-    /^table:([^:]+):user:([^:]+):list:([^:]+):(\d+):(\d+)$/
+    /^table:([^:]+):user:([^:]+):list:([^:]+):(\d+):(\d+)$/,
   );
   if (userScopedMatch) {
     return {
@@ -192,7 +189,11 @@ export function parseCacheKey(
   // session:sessionId123
   const sessionMatch = key.match(/^session:(.+)$/);
   if (sessionMatch) {
-    return { type: "session", tableName: "", details: { sessionId: sessionMatch[1] } };
+    return {
+      type: "session",
+      tableName: "",
+      details: { sessionId: sessionMatch[1] },
+    };
   }
 
   // rbac:userId:tableId
@@ -221,7 +222,7 @@ export function parseCacheKey(
 export function getVarnishCacheControl(
   isPublic: boolean,
   isSensitive: boolean,
-  ttlSeconds: number = 120
+  ttlSeconds: number = 120,
 ): string {
   if (isSensitive) {
     return "no-cache, no-store, must-revalidate";
@@ -241,7 +242,7 @@ export function shouldCacheInVarnish(
   method: string,
   isAuthenticated: boolean,
   isPublicRoute: boolean,
-  isSensitiveTable: boolean
+  isSensitiveTable: boolean,
 ): boolean {
   // Only cache GET requests
   if (method !== "GET") return false;
@@ -264,7 +265,7 @@ export function shouldCacheInVarnish(
 export function shouldCacheInRedis(
   method: string,
   isPublic: boolean,
-  isSensitive: boolean
+  isSensitive: boolean,
 ): boolean {
   // Only cache GET requests
   if (method !== "GET") return false;

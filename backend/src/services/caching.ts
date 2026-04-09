@@ -4,7 +4,7 @@
  */
 
 import { createClient } from "redis";
-import { buildCacheKey, invalidateCachePattern } from "../lib/cacheKeys";
+import { buildCacheKey } from "../lib/cacheKeys";
 
 export interface CacheConfig {
   ttl: {
@@ -61,7 +61,11 @@ export async function initializeRedis(redisUrl?: string) {
           const value = await client.get(key);
           if (value) {
             // Log cache hit
-            await logCacheOperation({ type: "HIT", key, table: extractTable(key) });
+            await logCacheOperation({
+              type: "HIT",
+              key,
+              table: extractTable(key),
+            });
           }
           return value;
         } catch (e) {
@@ -93,19 +97,19 @@ export async function initializeRedis(redisUrl?: string) {
         try {
           let cursor = 0;
           let keysDeleted = 0;
-          
+
           do {
             const result = await client.scan(cursor, {
               MATCH: pattern,
             });
             cursor = result.cursor;
-            
+
             if (result.keys && result.keys.length > 0) {
               await client.del(result.keys);
               keysDeleted += result.keys.length;
             }
           } while (cursor !== 0);
-          
+
           return keysDeleted;
         } catch (e) {
           console.error(`Redis SCAN error for pattern ${pattern}:`, e);
@@ -162,7 +166,11 @@ export async function getCache(key: string): Promise<any> {
 /**
  * Set cached data with TTL
  */
-export async function setCache(key: string, data: any, ttlSeconds?: number): Promise<void> {
+export async function setCache(
+  key: string,
+  data: any,
+  ttlSeconds?: number,
+): Promise<void> {
   if (config.strategy === "DISABLED" || !redisInstance) return;
 
   try {
@@ -176,7 +184,10 @@ export async function setCache(key: string, data: any, ttlSeconds?: number): Pro
 /**
  * Cache session data (Admin Panel)
  */
-export async function cacheSession(sessionId: string, sessionData: any): Promise<void> {
+export async function cacheSession(
+  sessionId: string,
+  sessionData: any,
+): Promise<void> {
   if (!redisInstance) return;
 
   const key = `session:${sessionId}`;
@@ -199,9 +210,31 @@ export async function getSession(sessionId: string): Promise<any> {
 }
 
 /**
+ * Cache active token for a user
+ */
+export async function cacheActiveUserToken(userId: string, token: string): Promise<void> {
+  if (!redisInstance) return;
+  const key = `active_token:${userId}`;
+  await setCache(key, token, config.ttl.session);
+}
+
+/**
+ * Get cached active token for a user
+ */
+export async function getActiveUserToken(userId: string): Promise<string | null> {
+  if (!redisInstance) return null;
+  const key = `active_token:${userId}`;
+  return getCache(key);
+}
+
+/**
  * Cache RBAC permissions (Admin Panel)
  */
-export async function cacheRBAC(userId: string, tableId: string, permissions: any): Promise<void> {
+export async function cacheRBAC(
+  userId: string,
+  tableId: string,
+  permissions: any,
+): Promise<void> {
   if (!redisInstance) return;
 
   const key = `rbac:${userId}:${tableId}`;
@@ -225,7 +258,10 @@ export async function getRBAC(userId: string, tableId: string): Promise<any> {
 /**
  * Cache dashboard stats (Admin Panel, short TTL)
  */
-export async function cacheDashboardStats(userId: string, stats: any): Promise<void> {
+export async function cacheDashboardStats(
+  userId: string,
+  stats: any,
+): Promise<void> {
   if (!redisInstance) return;
 
   const key = `stats:dashboard:${userId}`;
@@ -254,7 +290,7 @@ export async function cacheQueryResult(
   filters: any,
   limit: number,
   offset: number,
-  data: any
+  data: any,
 ): Promise<void> {
   if (!redisInstance) return;
 
@@ -273,7 +309,7 @@ export async function getCachedQueryResult(
   tableName: string,
   filters: any,
   limit: number,
-  offset: number
+  offset: number,
 ): Promise<any> {
   if (!redisInstance) return null;
 
@@ -282,9 +318,52 @@ export async function getCachedQueryResult(
 }
 
 /**
+ * Cache user-scoped query results
+ */
+export async function cacheUserQueryResult(
+  tableName: string,
+  userId: string,
+  filters: any,
+  limit: number,
+  offset: number,
+  data: any,
+): Promise<void> {
+  if (!redisInstance) return;
+
+  const { buildUserScopedCacheKey } = require("../lib/cacheKeys");
+  const key = buildUserScopedCacheKey(tableName, userId, { filters, limit, offset });
+  try {
+    await setCache(key, data, config.ttl.query);
+  } catch (e) {
+    console.error(`Failed to cache user query result:`, e);
+  }
+}
+
+/**
+ * Get cached user-scoped query result
+ */
+export async function getCachedUserQueryResult(
+  tableName: string,
+  userId: string,
+  filters: any,
+  limit: number,
+  offset: number,
+): Promise<any> {
+  if (!redisInstance) return null;
+
+  const { buildUserScopedCacheKey } = require("../lib/cacheKeys");
+  const key = buildUserScopedCacheKey(tableName, userId, { filters, limit, offset });
+  return getCache(key);
+}
+
+/**
  * Cache individual row
  */
-export async function cacheRow(tableName: string, rowId: string, rowData: any): Promise<void> {
+export async function cacheRow(
+  tableName: string,
+  rowId: string,
+  rowData: any,
+): Promise<void> {
   if (!redisInstance) return;
 
   const key = `table:${tableName}:row:${rowId}`;
@@ -298,7 +377,10 @@ export async function cacheRow(tableName: string, rowId: string, rowData: any): 
 /**
  * Get cached row
  */
-export async function getCachedRow(tableName: string, rowId: string): Promise<any> {
+export async function getCachedRow(
+  tableName: string,
+  rowId: string,
+): Promise<any> {
   if (!redisInstance) return null;
 
   const key = `table:${tableName}:row:${rowId}`;
@@ -329,7 +411,9 @@ export async function invalidateTableCache(tableName: string): Promise<number> {
       keysCleared: totalDeleted,
     });
 
-    console.log(`✓ Invalidated ${totalDeleted} cache keys for table: ${tableName}`);
+    console.log(
+      `✓ Invalidated ${totalDeleted} cache keys for table: ${tableName}`,
+    );
     return totalDeleted;
   } catch (e) {
     console.error(`Failed to invalidate table cache for ${tableName}:`, e);
@@ -340,7 +424,10 @@ export async function invalidateTableCache(tableName: string): Promise<number> {
 /**
  * Invalidate specific row cache
  */
-export async function invalidateRowCache(tableName: string, rowId: string): Promise<void> {
+export async function invalidateRowCache(
+  tableName: string,
+  rowId: string,
+): Promise<void> {
   if (!redisInstance) return;
 
   try {
@@ -479,12 +566,16 @@ export default {
   setCache,
   cacheSession,
   getSession,
+  cacheActiveUserToken,
+  getActiveUserToken,
   cacheRBAC,
   getRBAC,
   cacheDashboardStats,
   getDashboardStats,
   cacheQueryResult,
   getCachedQueryResult,
+  cacheUserQueryResult,
+  getCachedUserQueryResult,
   cacheRow,
   getCachedRow,
   invalidateTableCache,
