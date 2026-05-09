@@ -5,7 +5,7 @@
  * Provides type safety and IDE autocompletion for all dynamic API operations.
  */
 
-import type { ColumnDef } from "./types";
+import type { ColumnDef } from "../schema/types";
 
 // ============================================================================
 // QUERY & FILTER TYPES

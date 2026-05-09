@@ -58,7 +58,8 @@ export default function TablePage() {
   async function refresh() {
     setLoading(true);
     try {
-      const includeDeletedQuery = isAdmin(me) && includeDeleted ? "&includeDeleted=1" : "";
+      const includeDeletedQuery =
+        isAdmin(me) && includeDeleted ? "&includeDeleted=1" : "";
       const [c, r, a] = await Promise.all([
         apiGet(`/tables/${tableName}/columns`),
         apiGet(`/data/${tableName}?limit=${pageSize + 1}&offset=${page * pageSize}${includeDeletedQuery}`),
@@ -105,8 +106,9 @@ export default function TablePage() {
 
   const tableColumns = useMemo<ColumnDef<Row>[]>(() => {
     const base: ColumnDef<Row>[] = [
+      { header: "s_no", accessorKey: "s_no" },
       { header: "id", accessorKey: "id" },
-      ...(isAdmin(me) && includeDeleted
+      ...((isAdmin(me) || access?.visibilityMode === "USER_SCOPED") && includeDeleted
         ? [
             {
               header: "status",
@@ -124,7 +126,7 @@ export default function TablePage() {
       { header: "created_at", accessorKey: "created_at" }
     ];
     return base;
-  }, [columns, includeDeleted, me]);
+  }, [columns, includeDeleted, me, access?.visibilityMode]);
 
   const rt = useReactTable({
     data: filteredRows,
@@ -186,7 +188,7 @@ export default function TablePage() {
               </Select>
             </div>
           ) : null}
-          {isAdmin(me) ? (
+          {(isAdmin(me) || access?.visibilityMode === "USER_SCOPED") ? (
             <label className="flex items-center gap-2 rounded-md border bg-background/40 px-3 h-10 text-sm">
               <input
                 type="checkbox"
@@ -302,7 +304,8 @@ export default function TablePage() {
                       {access?.canUpdate || access?.canDelete ? (
                         <td className="px-3 py-2">
                           <div className="flex gap-2">
-                            {access?.canUpdate ? (
+                            {/* Edit Button (hidden if deleted) */}
+                            {access?.canUpdate && !Number(r.original.is_deleted) ? (
                               <RecordDialog
                                 title="Edit"
                                 mode="edit"
@@ -314,35 +317,67 @@ export default function TablePage() {
                                 columns={columns ?? []}
                                 initial={r.original as Row}
                                 onSubmit={async (payload: Record<string, unknown>) => {
-                                  await apiPut(`/data/${tableName}/${r.original.id}`, payload);
+                                  await apiPut(`/data/${tableName}/${rowKey(r.original as Row)}`, payload);
                                   toast.success("Updated");
                                   await refresh();
                                 }}
                               />
                             ) : null}
-                            {access?.canDelete ? (
+
+                            {/* Restore & Hard Delete Buttons (shown if deleted) */}
+                            {access?.canDelete && Number(r.original.is_deleted) && isAdmin(me) ? (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={async () => {
+                                    if (!confirm("Restore this row?")) return;
+                                    await apiPost(`/data/${tableName}/${rowKey(r.original as Row)}/restore`, {});
+                                    toast.success("Restored");
+                                    await refresh();
+                                  }}
+                                >
+                                  Restore
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={async () => {
+                                    if (!confirm("Delete this row? (permanent)")) return;
+                                    await apiDelete(`/data/${tableName}/${rowKey(r.original as Row)}/hard`);
+                                    toast.success("Permanently deleted");
+                                    await refresh();
+                                  }}
+                                >
+                                  Hard Delete
+                                </Button>
+                              </>
+                            ) : null}
+
+                            {/* Normal Delete Button (shown if NOT deleted) */}
+                            {access?.canDelete && !Number(r.original.is_deleted) ? (
                               <Button
                                 size="sm"
                                 variant="destructive"
                                 onClick={async () => {
-                                  if (r.original.is_deleted && isAdmin(me)) {
-                                    if (!confirm("Restore this row?")) return;
-                                    await apiPost(`/data/${tableName}/${r.original.id}/restore`, {});
-                                    toast.success("Restored");
-                                    await refresh();
-                                    return;
-                                  }
-                                  if (!confirm("Delete this row? (soft delete)")) return;
-                                  await apiDelete(`/data/${tableName}/${r.original.id}`);
+                                  if (!confirm("Delete this row?")) return;
+                                  await apiDelete(`/data/${tableName}/${rowKey(r.original as Row)}`);
                                   toast.success("Deleted");
                                   await refresh();
                                 }}
                               >
-                                {r.original.is_deleted && isAdmin(me) ? "Restore" : "Delete"}
+                                Delete
                               </Button>
                             ) : null}
-                            {isAdmin(me) ? (
-                              <VersionsDialog tableName={tableName} rowId={String(r.original.id)} columns={columns ?? []} onRestored={refresh} />
+
+                            {/* Versions Button (hidden if deleted) */}
+                            {isAdmin(me) && !Number(r.original.is_deleted) ? (
+                              <VersionsDialog
+                                tableName={tableName}
+                                rowId={rowKey(r.original as Row)}
+                                columns={columns ?? []}
+                                onRestored={refresh}
+                              />
                             ) : null}
                           </div>
                         </td>
@@ -969,3 +1004,9 @@ function ManageColumnsDialog({ tableName, onDone }: { tableName: string; onDone:
     </Dialog>
   );
 }
+  function rowKey(row: Row): string {
+    const sn = row.s_no;
+    if (typeof sn === "number" && Number.isFinite(sn)) return String(sn);
+    if (typeof sn === "string" && sn.trim()) return sn;
+    return String(row.id);
+  }

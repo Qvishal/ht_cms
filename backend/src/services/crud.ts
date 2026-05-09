@@ -1,4 +1,4 @@
-import { db } from "../db";
+import { db, dbDialect } from "../db";
 import { assertIdent, quoteIdent } from "../lib/ids";
 import type { ColumnDef } from "../schema/types";
 import { writeAuditLog } from "./audit";
@@ -9,13 +9,23 @@ import {
 } from "./registry";
 import type { VisibilityMode } from "./tableMetadata";
 import { createRowVersion } from "./versions";
+import { newId } from "../lib/uuid";
 
 type DbRow = Record<string, unknown> & {
   id: string;
+  s_no?: number;
   created_by?: string | null;
   is_deleted?: boolean;
   deleted_at?: string | null;
 };
+
+function rowKeyWhere(rowKey: string): { where: string; value: unknown } {
+  const asNum = Number(rowKey);
+  if (Number.isInteger(asNum) && asNum > 0 && String(rowKey).trim() === String(asNum)) {
+    return { where: "s_no = $1", value: asNum };
+  }
+  return { where: "id = $1", value: rowKey };
+}
 
 function validateValue(type: ColumnDef["type"], value: unknown): boolean {
   if (value === null || value === undefined) return true;
@@ -87,7 +97,13 @@ function buildWhere(ctx: DataContext): { whereSql: string; params: unknown[] } {
   const where: string[] = [];
   const params: unknown[] = [];
 
-  if (!ctx.includeDeleted) where.push("is_deleted = false");
+  // MySQL stores booleans as TINYINT(1) — use 0/1 literals for MySQL, false/true for Postgres
+  const isDeletedFalse = dbDialect === "mysql" ? "is_deleted = 0" : "is_deleted = false";
+  const isDeletedTrue  = dbDialect === "mysql" ? "is_deleted = 1" : "is_deleted = true";
+
+  // "Show deleted" → show ONLY deleted rows; otherwise show only active rows
+  where.push(ctx.includeDeleted ? isDeletedTrue : isDeletedFalse);
+
   if (!ctx.isAdmin && ctx.visibilityMode === "USER_SCOPED") {
     params.push(ctx.userId);
     where.push(`created_by = $${params.length}`);
@@ -98,6 +114,7 @@ function buildWhere(ctx: DataContext): { whereSql: string; params: unknown[] } {
     params,
   };
 }
+
 
 export async function listRows(
   table: string,
@@ -119,13 +136,14 @@ export async function listRows(
   return rows as DbRow[];
 }
 
-export async function getRow(table: string, id: string, ctx: DataContext) {
+export async function getRow(table: string, rowKey: string, ctx: DataContext) {
   assertIdent(table, "table");
   const ok = await tableExistsInRegistry(table);
   if (!ok) throw new Error(`Unknown table "${table}"`);
 
-  const params: unknown[] = [id];
-  const where: string[] = ["id = $1"];
+  const base = rowKeyWhere(rowKey);
+  const params: unknown[] = [base.value];
+  const where: string[] = [base.where];
   if (!ctx.includeDeleted) where.push("is_deleted = false");
   if (!ctx.isAdmin && ctx.visibilityMode === "USER_SCOPED") {
     params.push(ctx.userId);
@@ -150,6 +168,7 @@ export async function createRow(
   const columns = await getColumns(table);
   const payload = sanitizeInput(columns, input, "create");
 
+  payload.id = newId();
   payload.created_by = ctx.userId;
 
   const keys = Object.keys(payload);
@@ -157,12 +176,22 @@ export async function createRow(
 
   const colList = keys.map(quoteIdent).join(", ");
   const params = keys.map((_, i) => `$${i + 1}`).join(", ");
-  const rows = (await db.unsafe(
-    `insert into ${quoteIdent(table)} (${colList}) values (${params}) returning *`,
-    values,
-  )) as DbRow[];
+  if (dbDialect === "mysql") {
+    await db.unsafe(
+      `insert into ${quoteIdent(table)} (${colList}) values (${params})`,
+      values,
+    );
+  } else {
+    await db.unsafe(
+      `insert into ${quoteIdent(table)} (${colList}) values (${params})`,
+      values,
+    );
+  }
 
-  const row = rows[0] ?? null;
+  const row = await getRow(table, String(payload.id), {
+    ...ctx,
+    includeDeleted: true,
+  });
   const tableInfo = await getTableInfoByName(table);
   await writeAuditLog({
     userId: ctx.userId,
@@ -178,7 +207,7 @@ export async function createRow(
 
 export async function updateRow(
   table: string,
-  id: string,
+  rowKey: string,
   input: Record<string, unknown>,
   ctx: DataContext,
 ) {
@@ -186,7 +215,7 @@ export async function updateRow(
   const ok = await tableExistsInRegistry(table);
   if (!ok) throw new Error(`Unknown table "${table}"`);
 
-  const oldRow = await getRow(table, id, { ...ctx, includeDeleted: false });
+  const oldRow = await getRow(table, rowKey, { ...ctx, includeDeleted: false });
   if (!oldRow) return null;
 
   const columns = await getColumns(table);
@@ -198,8 +227,12 @@ export async function updateRow(
 
   const sets = keys.map((k, i) => `${quoteIdent(k)} = $${i + 1}`).join(", ");
 
-  const where: string[] = [`id = $${keys.length + 1}`, "is_deleted = false"];
-  const params: unknown[] = [...values, id];
+  const base = rowKeyWhere(rowKey);
+  const where: string[] = [
+    `${base.where.replace("$1", `$${keys.length + 1}`)}`,
+    "is_deleted = false",
+  ];
+  const params: unknown[] = [...values, base.value];
   if (!ctx.isAdmin && ctx.visibilityMode === "USER_SCOPED") {
     params.push(ctx.userId);
     where.push(`created_by = $${params.length}`);
@@ -209,23 +242,23 @@ export async function updateRow(
   if (tableInfo) {
     await createRowVersion({
       tableId: tableInfo.id,
-      rowId: id,
+      rowId: oldRow.id,
       data: oldRow,
       updatedBy: ctx.userId,
     });
   }
 
-  const rows = (await db.unsafe(
-    `update ${quoteIdent(table)} set ${sets} where ${where.join(" and ")} returning *`,
+  await db.unsafe(
+    `update ${quoteIdent(table)} set ${sets} where ${where.join(" and ")}`,
     params,
-  )) as DbRow[];
-  const nextRow = rows[0] ?? null;
+  );
+  const nextRow = await getRow(table, rowKey, { ...ctx, includeDeleted: false });
 
   await writeAuditLog({
     userId: ctx.userId,
     actionType: "UPDATE",
     tableId: tableInfo?.id ?? null,
-    rowId: id,
+    rowId: oldRow.id,
     oldValue: oldRow,
     newValue: nextRow,
   });
@@ -235,37 +268,40 @@ export async function updateRow(
 
 export async function softDeleteRow(
   table: string,
-  id: string,
+  rowKey: string,
   ctx: DataContext,
 ) {
   assertIdent(table, "table");
   const ok = await tableExistsInRegistry(table);
   if (!ok) throw new Error(`Unknown table "${table}"`);
 
-  const oldRow = await getRow(table, id, { ...ctx, includeDeleted: true });
-  if (!oldRow || oldRow.is_deleted) return null;
+  const oldRow = await getRow(table, rowKey, { ...ctx, includeDeleted: true });
+  // MySQL returns is_deleted as 0/1 (integer), Postgres returns true/false
+  if (!oldRow || Number(oldRow.is_deleted)) return null;
 
-  const where: string[] = ["id = $1", "is_deleted = false"];
-  const params: unknown[] = [id];
+  const base = rowKeyWhere(rowKey);
+  const where: string[] = [base.where, dbDialect === "mysql" ? "is_deleted = 0" : "is_deleted = false"];
+  const params: unknown[] = [base.value];
   if (!ctx.isAdmin && ctx.visibilityMode === "USER_SCOPED") {
     params.push(ctx.userId);
     where.push(`created_by = $${params.length}`);
   }
 
-  const rows = (await db.unsafe(
-    `update ${quoteIdent(table)} set is_deleted = true, deleted_at = now() where ${where.join(
+  const deletedAtSql = dbDialect === "mysql" ? "current_timestamp" : "now()";
+  await db.unsafe(
+    `update ${quoteIdent(table)} set is_deleted = true, deleted_at = ${deletedAtSql} where ${where.join(
       " and ",
-    )} returning *`,
+    )}`,
     params,
-  )) as DbRow[];
-  const nextRow = rows[0] ?? null;
+  );
+  const nextRow = await getRow(table, rowKey, { ...ctx, includeDeleted: true });
 
   const tableInfo = await getTableInfoByName(table);
   await writeAuditLog({
     userId: ctx.userId,
     actionType: "DELETE",
     tableId: tableInfo?.id ?? null,
-    rowId: id,
+    rowId: oldRow.id,
     oldValue: oldRow,
     newValue: nextRow,
   });
@@ -273,22 +309,69 @@ export async function softDeleteRow(
   return nextRow;
 }
 
-export async function restoreRow(table: string, id: string, ctx: DataContext) {
-  const oldRow = await getRow(table, id, { ...ctx, includeDeleted: true });
-  if (!oldRow || !oldRow.is_deleted) return null;
+export async function hardDeleteRow(
+  table: string,
+  rowKey: string,
+  ctx: DataContext,
+) {
+  assertIdent(table, "table");
+  const ok = await tableExistsInRegistry(table);
+  if (!ok) throw new Error(`Unknown table "${table}"`);
 
-  const rows = (await db.unsafe(
-    `update ${quoteIdent(table)} set is_deleted = false, deleted_at = null where id = $1 returning *`,
-    [id],
-  )) as DbRow[];
-  const nextRow = rows[0] ?? null;
+  const oldRow = await getRow(table, rowKey, { ...ctx, includeDeleted: true });
+  if (!oldRow) return null;
+
+  const base = rowKeyWhere(rowKey);
+  const where: string[] = [base.where];
+  const params: unknown[] = [base.value];
+  if (!ctx.isAdmin && ctx.visibilityMode === "USER_SCOPED") {
+    params.push(ctx.userId);
+    where.push(`created_by = $${params.length}`);
+  }
+
+  await db.unsafe(
+    `delete from ${quoteIdent(table)} where ${where.join(" and ")}`,
+    params,
+  );
+  const still = await getRow(table, rowKey, { ...ctx, includeDeleted: true });
+  if (still) return null;
+
+  const tableInfo = await getTableInfoByName(table);
+  await writeAuditLog({
+    userId: ctx.userId,
+    actionType: "DELETE",
+    tableId: tableInfo?.id ?? null,
+    rowId: oldRow.id,
+    oldValue: oldRow,
+    newValue: null,
+  });
+
+  return oldRow;
+}
+
+export async function restoreRow(
+  table: string,
+  rowKey: string,
+  ctx: DataContext,
+) {
+  const oldRow = await getRow(table, rowKey, { ...ctx, includeDeleted: true });
+  // MySQL returns is_deleted as 0/1 (integer), Postgres returns true/false
+  if (!oldRow || !Number(oldRow.is_deleted)) return null;
+
+  // Use dialect-safe boolean literal for is_deleted
+  const falseVal = dbDialect === "mysql" ? "0" : "false";
+  await db.unsafe(
+    `update ${quoteIdent(table)} set is_deleted = ${falseVal}, deleted_at = null where id = $1`,
+    [oldRow.id],
+  );
+  const nextRow = await getRow(table, rowKey, { ...ctx, includeDeleted: true });
 
   const tableInfo = await getTableInfoByName(table);
   await writeAuditLog({
     userId: ctx.userId,
     actionType: "UPDATE",
     tableId: tableInfo?.id ?? null,
-    rowId: id,
+    rowId: oldRow.id,
     oldValue: oldRow,
     newValue: nextRow,
   });

@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { apiGet, apiPost } from "@/lib/api";
 import { clearToken, getToken } from "@/lib/auth";
 import { isAdmin, SessionProvider, type Me } from "@/lib/session";
+import { useSafeReplace } from "@/lib/safe-router";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const safeReplace = useSafeReplace();
   const pathname = usePathname();
   const [tables, setTables] = useState<string[] | null>(null);
   const [me, setMe] = useState<Me | null>(null);
@@ -28,12 +30,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     const token = getToken();
     if (!token) {
-      router.replace("/login");
+      safeReplace("/login");
       return;
     }
     loadMeAndTables();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router]);
+  }, [safeReplace]);
 
   async function loadMeAndTables() {
     try {
@@ -44,7 +46,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       toast.error((e as Error).message ?? "Failed to load session");
       if ((e as Error).message?.toLowerCase().includes("unauthorized")) {
         clearToken();
-        router.replace("/login");
+        safeReplace("/login");
       }
     }
   }
@@ -57,7 +59,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       toast.error((e as Error).message ?? "Failed to load tables");
       if ((e as Error).message?.toLowerCase().includes("unauthorized")) {
         clearToken();
-        router.replace("/login");
+        safeReplace("/login");
       }
     }
   }
@@ -123,7 +125,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   className="sm:hidden"
                   onClick={() => {
                     clearToken();
-                    router.replace("/login");
+                    safeReplace("/login");
                   }}
                   aria-label="Logout"
                   title="Logout"
@@ -139,7 +141,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     variant="secondary"
                     onClick={() => {
                       clearToken();
-                      router.replace("/login");
+                      safeReplace("/login");
                     }}
                   >
                     Logout

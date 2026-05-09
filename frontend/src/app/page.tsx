@@ -1,17 +1,16 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { getToken } from "@/lib/auth";
+import { useSafeReplace } from "@/lib/safe-router";
 
 export default function HomePage() {
-  const router = useRouter();
+  const safeReplace = useSafeReplace();
 
   useEffect(() => {
     const token = getToken();
-    router.replace(token ? "/dashboard" : "/login");
-  }, [router]);
+    safeReplace(token ? "/dashboard" : "/login");
+  }, [safeReplace]);
 
   return null;
 }
-

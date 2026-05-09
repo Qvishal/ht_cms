@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
@@ -10,6 +9,7 @@ import { toast } from "sonner";
 
 import { apiPost, apiPublicGet } from "@/lib/api";
 import { setToken } from "@/lib/auth";
+import { useSafeReplace } from "@/lib/safe-router";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,7 +24,7 @@ const LoginSchema = z.object({
 type LoginValues = z.infer<typeof LoginSchema>;
 
 export default function LoginPage() {
-  const router = useRouter();
+  const safeReplace = useSafeReplace();
   const [status, setStatus] = useState<{ hasAdmin: boolean; schemaInitialized: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -54,7 +54,7 @@ export default function LoginPage() {
       toast.success(mode === "bootstrap" ? "Admin created" : "Welcome back");
       // schemaInitialized is not returned by auth endpoints; check status after login
       const s = await apiPublicGet("/setup/status");
-      router.replace(s.schemaInitialized ? "/dashboard" : "/setup");
+      safeReplace(s.schemaInitialized ? "/dashboard" : "/setup");
     } catch (e) {
       toast.error((e as Error).message);
     } finally {

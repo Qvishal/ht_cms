@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,6 +9,7 @@ import { toast } from "sonner";
 
 import { apiPost, apiPublicGet } from "@/lib/api";
 import { setToken } from "@/lib/auth";
+import { useSafeReplace } from "@/lib/safe-router";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,7 +25,7 @@ const RegisterSchema = z.object({
 type RegisterValues = z.infer<typeof RegisterSchema>;
 
 export default function RegisterPage() {
-  const router = useRouter();
+  const safeReplace = useSafeReplace();
   const [loading, setLoading] = useState(false);
 
   const form = useForm<RegisterValues>({
@@ -36,10 +36,10 @@ export default function RegisterPage() {
   useEffect(() => {
     apiPublicGet("/setup/status")
       .then((s) => {
-        if (!s.hasAdmin) router.replace("/login");
+        if (!s.hasAdmin) safeReplace("/login");
       })
       .catch(() => {});
-  }, [router]);
+  }, [safeReplace]);
 
   async function onSubmit(values: RegisterValues) {
     setLoading(true);
@@ -48,7 +48,7 @@ export default function RegisterPage() {
       if (!res?.token) throw new Error(res?.error ?? "Registration failed");
       setToken(res.token);
       toast.success("Account created");
-      router.replace("/dashboard");
+      safeReplace("/dashboard");
     } catch (e) {
       toast.error((e as Error).message);
     } finally {

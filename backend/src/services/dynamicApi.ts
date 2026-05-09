@@ -6,7 +6,7 @@
  * and integrated with audit logs and versioning.
  */
 
-import { db } from "../db";
+import { db, dbDialect } from "../db";
 import { assertIdent, quoteIdent } from "../lib/ids";
 import type { ColumnDef } from "../schema/types";
 import {
@@ -85,7 +85,13 @@ export function buildDynamicWhere(
         where.push(`${quoteIdent(filter.field)} < $${params.length}`);
       } else if (filter.operator === "like") {
         params.push(`%${filter.value}%`);
-        where.push(`${quoteIdent(filter.field)} ilike $${params.length}`);
+        if (dbDialect === "mysql") {
+          where.push(
+            `lower(${quoteIdent(filter.field)}) like lower($${params.length})`,
+          );
+        } else {
+          where.push(`${quoteIdent(filter.field)} ilike $${params.length}`);
+        }
       } else if (filter.operator === "in") {
         if (!Array.isArray(filter.value) || filter.value.length === 0) {
           throw new Error(
@@ -98,7 +104,7 @@ export function buildDynamicWhere(
             return `$${params.length}`;
           })
           .join(",");
-        where.push(`${quoteIdent(filter.field)} = any(array[${placeholders}])`);
+        where.push(`${quoteIdent(filter.field)} in (${placeholders})`);
       } else {
         throw new Error(`Unknown operator: "${filter.operator}"`);
       }
@@ -170,7 +176,7 @@ export async function countRows(
     whereClauses.length > 0 ? `where ${whereClauses.join(" and ")}` : "";
 
   const result = (await db.unsafe(
-    `select count(*)::int as count from ${quoteIdent(table)} ${whereClause}`,
+    `select count(*) as count from ${quoteIdent(table)} ${whereClause}`,
     params,
   )) as { count: number }[];
 
@@ -221,12 +227,12 @@ export async function bulkSoftDelete(
     })
     .join(",");
 
-  const result = (await db.unsafe(
-    `update ${quoteIdent(table)} set is_deleted = true, deleted_at = now() where id = any(array[${idPlaceholders}]) returning id`,
+  const deletedAtSql = dbDialect === "mysql" ? "current_timestamp" : "now()";
+  const out = await db.exec(
+    `update ${quoteIdent(table)} set is_deleted = true, deleted_at = ${deletedAtSql} where id in (${idPlaceholders})`,
     ids,
-  )) as { id: string }[];
-
-  return { deleted: result.length };
+  );
+  return { deleted: out.affectedRows ?? 0 };
 }
 
 /**
@@ -260,9 +266,16 @@ export async function bulkUpdate(
       params.push(new Date().toISOString());
       setClauses.push(`updated_at = $${params.length}`);
 
+      const asNum = Number(id);
+      const isSno =
+        Number.isInteger(asNum) &&
+        asNum > 0 &&
+        String(id).trim() === String(asNum);
       await db.unsafe(
-        `update ${quoteIdent(table)} set ${setClauses.join(", ")} where id = $1`,
-        params,
+        `update ${quoteIdent(table)} set ${setClauses.join(", ")} where ${
+          isSno ? "s_no" : "id"
+        } = $1`,
+        isSno ? [asNum, ...params.slice(1)] : params,
       );
       updatedCount++;
     }

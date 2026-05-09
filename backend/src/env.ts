@@ -6,10 +6,14 @@ const EnvSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
-  DATABASE_URL: z.string().min(1),
+  DB_DIALECT: z.enum(["postgres", "mysql"]).default("mysql"),
+  // Backward compatible: existing installs use DATABASE_URL (Postgres).
+  DATABASE_URL: z.string().min(1).optional(),
+  // New: MySQL connection URL, e.g. mysql://user:pass@host:3306/db
+  MYSQL_URL: z.string().min(1).optional(),
   REDIS_URL: z.string().url().default("redis://127.0.0.1:6379"),
   JWT_SECRET: z.string().min(16).or(z.string().min(1)),
-  FRONTEND_ORIGIN: z.string().url().default("http://localhost:3001"),
+  FRONTEND_ORIGIN: z.string().url().default("http://localhost:3000"),
   CACHE_STRATEGY: z
     .enum(["HYBRID", "REDIS_ONLY", "DISABLED"])
     .default("HYBRID"),
@@ -43,6 +47,18 @@ export function loadEnv(): Env {
       parsed.error.flatten().fieldErrors,
     );
     throw new Error("Invalid environment variables");
+  }
+  if (parsed.data.DB_DIALECT === "postgres" && !parsed.data.DATABASE_URL) {
+    throw new Error("DATABASE_URL is required when DB_DIALECT=postgres");
+  }
+  if (
+    parsed.data.DB_DIALECT === "mysql" &&
+    !parsed.data.MYSQL_URL &&
+    !parsed.data.DATABASE_URL
+  ) {
+    throw new Error(
+      "MYSQL_URL (recommended) or DATABASE_URL is required when DB_DIALECT=mysql",
+    );
   }
   return parsed.data;
 }

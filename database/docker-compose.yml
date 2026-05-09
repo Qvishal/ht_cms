@@ -12,6 +12,22 @@ services:
     volumes:
       - ht_cms_pgdata:/var/lib/postgresql/data
 
+  mysql:
+    image: mysql:8.4
+    container_name: ht_cms_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ht_cms
+      MYSQL_USER: ht_cms
+      MYSQL_PASSWORD: ht_cms
+      MYSQL_ROOT_PASSWORD: ht_cms_root
+    ports:
+      - "3307:3306"
+    command: >
+      --sql-mode=STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+    volumes:
+      - ht_cms_mysqldata:/var/lib/mysql
+
   redis:
     image: redis:7-alpine
     container_name: ht_cms_redis
@@ -40,5 +56,5 @@ services:
 
 volumes:
   ht_cms_pgdata:
+  ht_cms_mysqldata:
   ht_cms_redisdata:
-

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { z } from "zod";
 import {
   useFieldArray,
@@ -16,6 +15,7 @@ import { toast } from "sonner";
 
 import { apiGet, apiPost } from "@/lib/api";
 import { getToken } from "@/lib/auth";
+import { useSafeReplace } from "@/lib/safe-router";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,7 +43,7 @@ const SchemaPayload = z.object({
 type SchemaValues = z.infer<typeof SchemaPayload>;
 
 export default function SetupPage() {
-  const router = useRouter();
+  const safeReplace = useSafeReplace();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [selectedTableIndex, setSelectedTableIndex] = useState(0);
@@ -62,28 +62,28 @@ export default function SetupPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace("/login");
+      safeReplace("/login");
       return;
     }
     apiGet("/me")
       .then((m) => {
-        if (m?.user?.role !== "admin") router.replace("/dashboard");
+        if (m?.user?.role !== "admin") safeReplace("/dashboard");
       })
       .catch(() => {});
     apiGet("/setup/status")
       .then((s) => {
-        if (s.schemaInitialized) router.replace("/dashboard");
+        if (s.schemaInitialized) safeReplace("/dashboard");
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [router]);
+  }, [safeReplace]);
 
   async function apply(values: SchemaValues) {
     setSubmitting(true);
     try {
       await apiPost("/schema/apply", { tables: values.tables });
       toast.success("Schema applied");
-      router.replace("/dashboard");
+      safeReplace("/dashboard");
     } catch (e) {
       toast.error((e as Error).message);
     } finally {

@@ -12,7 +12,7 @@ import {
   requireTableRead,
   requireTableWrite,
 } from "./auth/rbac";
-import { db } from "./db";
+import { db, dbDialect, sql } from "./db";
 import { loadEnv } from "./env";
 import { assertIdent, quoteIdent } from "./lib/ids";
 import { encryptPayload, decryptPayload } from "./lib/encryption";
@@ -27,6 +27,7 @@ import {
 import {
   createRow,
   getRow,
+  hardDeleteRow,
   listRows,
   restoreRow,
   softDeleteRow,
@@ -304,7 +305,7 @@ caching.setCacheConfig({
 app
   .get("/health", async ({ set }) => {
     try {
-      await db`select 1`;
+      await db.query(sql`select 1`);
       return { db: "ok" };
     } catch (e) {
       set.status = 503;
@@ -427,11 +428,23 @@ app
       role: "admin",
     });
     // Keep legacy table in sync for older installs/tools.
-    await db`
-      insert into admin_users (id, email, password_hash)
-      values (${admin.id}, ${admin.email.toLowerCase()}, ${passwordHash})
-      on conflict (email) do nothing
-    `;
+    if (dbDialect === "mysql") {
+      await db.unsafe(
+        `
+          insert ignore into admin_users (id, email, password_hash)
+          values ($1, $2, $3)
+        `,
+        [admin.id, admin.email.toLowerCase(), passwordHash],
+      );
+    } else {
+      await db.query(
+        sql`
+          insert into admin_users (id, email, password_hash)
+          values (${admin.id}, ${admin.email.toLowerCase()}, ${passwordHash})
+          on conflict (email) do nothing
+        `,
+      );
+    }
     const token = await jwt.sign({
       sub: admin.id,
       email: admin.email,
@@ -654,10 +667,18 @@ app
         const tableIdent = quoteIdent(params.table);
         const colIdent = quoteIdent(params.column);
         const nextSqlType = sqlTypeFor(parsed.type);
+        const nullability =
+          (parsed.required ?? existing.required) === true ? "not null" : "null";
         try {
-          await db.unsafe(
-            `alter table ${tableIdent} alter column ${colIdent} type ${nextSqlType} using ${colIdent}::${nextSqlType};`,
-          );
+          if (dbDialect === "mysql") {
+            await db.unsafe(
+              `alter table ${tableIdent} modify column ${colIdent} ${nextSqlType} ${nullability};`,
+            );
+          } else {
+            await db.unsafe(
+              `alter table ${tableIdent} alter column ${colIdent} type ${nextSqlType} using ${colIdent}::${nextSqlType};`,
+            );
+          }
         } catch (e) {
           set.status = 400;
           return { error: `Failed to change type: ${(e as Error).message}` };
@@ -946,8 +967,10 @@ app
       .catch(50)
       .parse(query.limit);
     const offset = z.coerce.number().int().min(0).catch(0).parse(query.offset);
+    const visibilityMode = await getVisibilityMode(params.table);
+    const includeDeletedReq = String(query.includeDeleted ?? "") === "1";
     const includeDeleted =
-      authUser.role === "admin" && String(query.includeDeleted ?? "") === "1";
+      includeDeletedReq && (authUser.role === "admin" || visibilityMode === "USER_SCOPED");
 
     // Track active filters for caching determinism
     const filters = includeDeleted
@@ -963,7 +986,7 @@ app
       offset,
     );
     if (cachedRows) {
-      set.headers["Cache-Control"] = "private, max-age=120";
+      set.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate";
       set.headers["Vary"] = "Authorization, Origin";
       set.headers["X-Cache"] = "HIT";
       return cachedRows;
@@ -972,7 +995,6 @@ app
     // RBAC check (miss)
     await requireTableRead(authUser, params.table);
     
-    const visibilityMode = await getVisibilityMode(params.table);
     const rows = await listRows(params.table, limit, offset, {
       userId: authUser.id,
       isAdmin: authUser.role === "admin",
@@ -990,7 +1012,7 @@ app
       { rows },
     );
 
-    set.headers["Cache-Control"] = "private, max-age=120";
+    set.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate";
     set.headers["Vary"] = "Authorization, Origin";
     set.headers["X-Cache"] = "MISS";
     return { rows };
@@ -1002,8 +1024,9 @@ app
     }
     await requireTableRead(authUser, params.table);
     const visibilityMode = await getVisibilityMode(params.table);
+    const includeDeletedReq = String(query.includeDeleted ?? "") === "1";
     const includeDeleted =
-      authUser.role === "admin" && String(query.includeDeleted ?? "") === "1";
+      includeDeletedReq && (authUser.role === "admin" || visibilityMode === "USER_SCOPED");
     const row = await getRow(params.table, params.id, {
       userId: authUser.id,
       isAdmin: authUser.role === "admin",
@@ -1153,17 +1176,45 @@ app
     }
     await requireTableWrite(authUser, params.table);
     const visibilityMode = await getVisibilityMode(params.table);
-    const row = await softDeleteRow(params.table, params.id, {
+    const ctx = {
       userId: authUser.id,
       isAdmin: authUser.role === "admin",
       visibilityMode,
-    });
+    };
+    // Always perform soft delete for standard delete endpoint
+    const row = await softDeleteRow(params.table, params.id, ctx);
     if (!row) {
       set.status = 404;
       return { error: "Not found" };
     }
 
     // ✅ INVALIDATE CACHE AFTER DELETE
+    await cacheInvalidation.smartInvalidate({
+      operation: "DELETE",
+      tableName: params.table,
+      rowId: params.id,
+    });
+
+    return { ok: true };
+  })
+  .delete("/data/:table/:id/hard", async ({ params, authUser, set }) => {
+    // Admin only
+    if (!authUser || authUser.role !== "admin") {
+      set.status = 401;
+      return { error: "Unauthorized - Admin access required" };
+    }
+    const row = await hardDeleteRow(params.table, params.id, {
+      userId: authUser.id,
+      isAdmin: true,
+      visibilityMode: "GLOBAL_ACCESS",
+      includeDeleted: true,
+    });
+    if (!row) {
+      set.status = 404;
+      return { error: "Not found" };
+    }
+
+    // ✅ INVALIDATE CACHE AFTER HARD DELETE
     await cacheInvalidation.smartInvalidate({
       operation: "DELETE",
       tableName: params.table,
@@ -1188,6 +1239,14 @@ app
       set.status = 404;
       return { error: "Not found" };
     }
+
+    // ✅ INVALIDATE CACHE AFTER RESTORE
+    await cacheInvalidation.smartInvalidate({
+      operation: "RESTORE",
+      tableName: params.table,
+      rowId: params.id,
+    });
+
     return { row };
   })
   // Admin APIs
@@ -1262,13 +1321,15 @@ app
 
       // Best-effort sync to legacy table if the user is an admin and exists there.
       if (user.role === "admin") {
-        await db`
-          update admin_users
-          set
-            email = ${user.email.toLowerCase()},
-            password_hash = coalesce(${passwordHash ?? null}, password_hash)
-          where id = ${user.id}
-        `;
+        await db.query(
+          sql`
+            update admin_users
+            set
+              email = ${user.email.toLowerCase()},
+              password_hash = coalesce(${passwordHash ?? null}, password_hash)
+            where id = ${user.id}
+          `,
+        );
       }
 
       return { user };
@@ -1311,7 +1372,7 @@ app
     }
 
     // Best-effort cleanup of legacy table.
-    await db`delete from admin_users where id = ${params.id}`;
+    await db.query(sql`delete from admin_users where id = ${params.id}`);
 
     return { ok: true };
   })
@@ -1431,9 +1492,19 @@ app
         set.status = 404;
         return { error: "Table not found" };
       }
+      const row = await getRow(params.table, params.id, {
+        userId: authUser.id,
+        isAdmin: true,
+        visibilityMode: "GLOBAL_ACCESS",
+        includeDeleted: true,
+      });
+      if (!row) {
+        set.status = 404;
+        return { error: "Row not found" };
+      }
       const versions = await listRowVersions({
         tableId: tableInfo.id,
-        rowId: params.id,
+        rowId: row.id,
       });
       return { versions };
     },
@@ -1450,11 +1521,21 @@ app
         set.status = 404;
         return { error: "Table not found" };
       }
+      const row = await getRow(params.table, params.id, {
+        userId: authUser.id,
+        isAdmin: true,
+        visibilityMode: "GLOBAL_ACCESS",
+        includeDeleted: true,
+      });
+      if (!row) {
+        set.status = 404;
+        return { error: "Row not found" };
+      }
       const version = await getRowVersionById({
         tableId: tableInfo.id,
         versionId: parsed.versionId,
       });
-      if (!version || version.row_id !== params.id) {
+      if (!version || version.row_id !== row.id) {
         set.status = 404;
         return { error: "Version not found" };
       }
@@ -1476,6 +1557,14 @@ app
         set.status = 404;
         return { error: "Row not found" };
       }
+
+      // ✅ INVALIDATE CACHE AFTER RESTORE VERSION
+      await cacheInvalidation.smartInvalidate({
+        operation: "UPDATE", // Treating version restore as an update for cache purposes
+        tableName: params.table,
+        rowId: params.id,
+      });
+
       return { row: next };
     },
   )
