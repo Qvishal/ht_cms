@@ -986,7 +986,6 @@ app
       offset,
     );
     if (cachedRows) {
-      set.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate";
       set.headers["Vary"] = "Authorization, Origin";
       set.headers["X-Cache"] = "HIT";
       return cachedRows;
@@ -1012,7 +1011,6 @@ app
       { rows },
     );
 
-    set.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate";
     set.headers["Vary"] = "Authorization, Origin";
     set.headers["X-Cache"] = "MISS";
     return { rows };

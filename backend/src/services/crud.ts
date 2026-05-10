@@ -361,8 +361,8 @@ export async function restoreRow(
   // Use dialect-safe boolean literal for is_deleted
   const falseVal = dbDialect === "mysql" ? "0" : "false";
   await db.unsafe(
-    `update ${quoteIdent(table)} set is_deleted = ${falseVal}, deleted_at = null where id = $1`,
-    [oldRow.id],
+    `update ${quoteIdent(table)} set is_deleted = ${falseVal}, deleted_at = null where s_no = $1`,
+    [oldRow.s_no],
   );
   const nextRow = await getRow(table, rowKey, { ...ctx, includeDeleted: true });
 

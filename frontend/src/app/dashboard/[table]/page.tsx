@@ -159,35 +159,7 @@ export default function TablePage() {
           ) : null}
         </div>
         <div className="flex gap-2">
-          {isAdmin(me) ? (
-            <div className="flex items-center gap-2 rounded-md border bg-background/40 px-3 h-10">
-              <span className="text-xs text-muted-foreground">Visibility</span>
-              <Select
-                value={(access?.visibilityMode ?? "GLOBAL_ACCESS") as string}
-                onValueChange={async (v) => {
-                  setUpdatingVisibility(true);
-                  try {
-                    await apiPut(`/tables/${tableName}/visibility`, { visibilityMode: v });
-                    toast.success("Visibility updated");
-                    setAccess((prev) => (prev ? { ...prev, visibilityMode: v as "GLOBAL_ACCESS" | "USER_SCOPED" } : prev));
-                  } catch (e) {
-                    toast.error((e as Error).message);
-                  } finally {
-                    setUpdatingVisibility(false);
-                  }
-                }}
-                disabled={updatingVisibility}
-              >
-                <SelectTrigger className="h-8 w-[180px]">
-                  <SelectValue placeholder="Visibility" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="GLOBAL_ACCESS">GLOBAL_ACCESS</SelectItem>
-                  <SelectItem value="USER_SCOPED">USER_SCOPED</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          ) : null}
+
           {(isAdmin(me) || access?.visibilityMode === "USER_SCOPED") ? (
             <label className="flex items-center gap-2 rounded-md border bg-background/40 px-3 h-10 text-sm">
               <input

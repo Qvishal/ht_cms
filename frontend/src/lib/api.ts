@@ -55,7 +55,7 @@ async function request(path: string, init?: RequestInit, auth = true) {
 }
 
 export function apiGet(path: string) {
-  return request(path, { method: "GET", cache: "no-store" }, true);
+  return request(path, { method: "GET" }, true);
 }
 
 export function apiPost(path: string, body: unknown) {
@@ -101,6 +101,6 @@ export function apiDelete(path: string) {
 }
 
 export function apiPublicGet(path: string) {
-  return request(path, { method: "GET", cache: "no-store" }, false);
+  return request(path, { method: "GET" }, false);
 }
 

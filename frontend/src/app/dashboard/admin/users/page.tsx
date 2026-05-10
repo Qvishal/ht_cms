@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 
 type User = { id: string; email: string; name: string | null; role: "admin" | "user" };
-type TableInfo = { id: string; name: string };
+type TableInfo = { id: string; name: string; visibilityMode?: "GLOBAL_ACCESS" | "USER_SCOPED" };
 type Permission = { tableId: string; tableName: string; accessType: "read" | "write" };
 
 export default function AdminUsersPage() {
@@ -158,7 +158,82 @@ export default function AdminUsersPage() {
           )}
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <CardTitle className="text-base">Tables & Visibility</CardTitle>
+          </div>
+          <p className="text-sm text-muted-foreground">Manage which tables are global vs. user-scoped.</p>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-9 w-full" />
+            </div>
+          ) : tables && tables.length === 0 ? (
+            <div className="rounded-md border p-6 text-sm text-muted-foreground">No tables exist yet.</div>
+          ) : (
+            <div className="w-full overflow-auto rounded-md border bg-card">
+              <table className="w-full text-sm">
+                <thead className="bg-muted sticky top-0">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Table Name</th>
+                    <th className="px-3 py-2 text-left font-medium">Visibility Mode</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(tables ?? []).map((t) => (
+                    <tr key={t.id} className="border-t odd:bg-muted/20">
+                      <td className="px-3 py-2 font-medium">{t.name}</td>
+                      <td className="px-3 py-2">
+                        <VisibilitySelect
+                          table={t}
+                          onChanged={(next) =>
+                            setTables((prev) => (prev ?? []).map((x) => (x.id === next.id ? next : x)))
+                          }
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
+  );
+}
+
+function VisibilitySelect({ table, onChanged }: { table: TableInfo; onChanged: (t: TableInfo) => void }) {
+  const [saving, setSaving] = useState(false);
+  return (
+    <Select
+      value={table.visibilityMode ?? "GLOBAL_ACCESS"}
+      onValueChange={async (v) => {
+        setSaving(true);
+        try {
+          await apiPut(`/tables/${table.name}/visibility`, { visibilityMode: v });
+          onChanged({ ...table, visibilityMode: v as "GLOBAL_ACCESS" | "USER_SCOPED" });
+          toast.success("Visibility updated");
+        } catch (e) {
+          toast.error((e as Error).message);
+        } finally {
+          setSaving(false);
+        }
+      }}
+      disabled={saving}
+    >
+      <SelectTrigger className="w-[180px]">
+        <SelectValue placeholder="Visibility" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="GLOBAL_ACCESS">GLOBAL_ACCESS</SelectItem>
+        <SelectItem value="USER_SCOPED">USER_SCOPED</SelectItem>
+      </SelectContent>
+    </Select>
   );
 }
 

@@ -3,12 +3,22 @@ import { assertIdent } from "../lib/ids";
 
 export type AccessType = "read" | "write";
 
-export type TableInfo = { id: string; name: string };
+export type TableInfo = { id: string; name: string; visibilityMode: "GLOBAL_ACCESS" | "USER_SCOPED" };
 
 export async function listAllTables(): Promise<TableInfo[]> {
-  return await db.query<TableInfo>(
-    sql`select id, name from cms_tables order by name asc`,
+  const rows = await db.query<{ id: string; name: string; visibility_mode: "GLOBAL_ACCESS" | "USER_SCOPED" | null }>(
+    sql`
+      select t.id, t.name, m.visibility_mode 
+      from cms_tables t 
+      left join table_metadata m on m.table_id = t.id 
+      order by t.name asc
+    `,
   );
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    visibilityMode: r.visibility_mode ?? "GLOBAL_ACCESS",
+  }));
 }
 
 export async function listTablesForUser(userId: string): Promise<string[]> {
