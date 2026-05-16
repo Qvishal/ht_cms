@@ -5,7 +5,7 @@ import Link from "next/link";
 
 export default function OfflinePage() {
   const [status, setStatus] = useState<"checking" | "ok" | "down">("checking");
-  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
 
   const hostname = typeof window !== "undefined" ? window.location.hostname : "";
   const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
